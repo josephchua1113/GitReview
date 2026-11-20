@@ -21,17 +21,32 @@ REPOS_FOLDER      = "/path/to/repos"        # parent folder containing the git r
 TARGET_BRANCH     = "release/SG_19.18.0"    # branch being released: <release|hotfix>/<Country>_<Version>
 REMOTE_NAME       = "origin"                # remote to read branches from
 OUTPUT_FILE       = "index.html"            # generated HTML page
+BITBUCKET_BASE_URL = None                   # Bitbucket web address for links, e.g. "https://bitbucket.mycompany.com"
 DIFF_URL_TEMPLATE = None                    # only needed for self-hosted / unrecognised git hosts
-# DIFF_URL_TEMPLATE example (a pair: one template for commit links, one for compare links):
+#
+# BITBUCKET_BASE_URL: set this when your repositories are on Bitbucket. Every link
+#   (commit diff, base -> target compare diff, and file view) is then built from this
+#   address, for every repository. The project/workspace and repository name come
+#   from each repository's remote URL (the last two parts of its path, after "scm/").
+#   - "https://bitbucket.org"            -> Bitbucket Cloud link formats
+#   - any other address (self-hosted)    -> Bitbucket Server / Data Center formats,
+#                                           e.g. https://bitbucket.mycompany.com/projects/PROJ/repos/repo
+#   Include the context path if your server has one: "https://host/bitbucket".
+#   Leave it as None to detect the platform from the remote URL instead.
+#   It can't be combined with DIFF_URL_TEMPLATE.
+#
+# DIFF_URL_TEMPLATE example (commit and compare links required, file link optional):
 # DIFF_URL_TEMPLATE = {
 #     "commit":  "{base_url}/commit/{commit}#diff-{path_sha256}",
 #     "compare": "{base_url}/compare/{base}...{target}#diff-{path_sha256}",
+#     "file":    "{base_url}/blob/{target_commit}/{path}",
 # }
-# Placeholders: {base_url} {commit} {base} {target} {path} {path_sha256} {path_sha1}
+# Placeholders: {base_url} {commit} {base} {target} {target_commit} {path} {path_sha256} {path_sha1}
 #   base/target are branch names without the "<REMOTE_NAME>/" prefix, URL-encoded
-#   (so "/" becomes %2F). path is URL-encoded with "/" kept. path_sha256 / path_sha1
-#   are hex digests of the UTF-8 file path. In commit links for commits that change
-#   no file, path, path_sha256 and path_sha1 are empty strings.
+#   (so "/" becomes %2F). target_commit is the full hash the target branch points to.
+#   path is URL-encoded with "/" kept. path_sha256 / path_sha1 are hex digests of the
+#   UTF-8 file path. In commit links for commits that change no file, path,
+#   path_sha256 and path_sha1 are empty strings.
 # =========================
 
 import dataclasses
@@ -76,9 +91,10 @@ class LogParseError(Exception):
 # --------------------------------------------------------------------------
 
 BRANCH_RE = re.compile(r"^(release|hotfix)/([A-Za-z]+)_([0-9]+(?:\.[0-9]+)*)$")
-TEMPLATE_KEYS = ("commit", "compare")
+TEMPLATE_KEYS = ("commit", "compare")          # required
+TEMPLATE_OPTIONAL_KEYS = ("file",)
 TEMPLATE_PLACEHOLDERS = frozenset(
-    {"base_url", "commit", "base", "target", "path", "path_sha256", "path_sha1"})
+    {"base_url", "commit", "base", "target", "target_commit", "path", "path_sha256", "path_sha1"})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -88,19 +104,17 @@ class BranchName:
     kind: str                    # "release" or "hotfix"
     country: str                 # e.g. "SG"
     version: str                 # e.g. "19.18.0", exactly as written
-    version_key: Tuple[int, ...]  # numeric parts with trailing zeros removed
+    version_key: Tuple[int, ...]  # numeric parts, as written
 
 
 def version_key(version: str) -> Tuple[int, ...]:
     """Numeric, part-by-part comparison key: "19.9.0" < "19.17.1" < "19.18.0".
 
-    Trailing zero parts are dropped so "19.18" and "19.18.0" count as the same
-    version (and so are never treated as lower than each other).
+    Parts are compared as numbers from left to right. When all shared parts are
+    equal, the version with more parts is higher: "19.17" < "19.17.0" < "19.17.1".
+    So two versions are the same only when every part is the same number.
     """
-    parts = [int(p) for p in version.split(".")]
-    while len(parts) > 1 and parts[-1] == 0:
-        parts.pop()
-    return tuple(parts)
+    return tuple(int(p) for p in version.split("."))
 
 
 def parse_branch_name(name: str) -> Optional[BranchName]:
@@ -118,10 +132,11 @@ class Config:
     remote_name: str
     output_file: str
     diff_url_template: Optional[Dict[str, str]]
+    bitbucket_base_url: Optional[str] = None
 
 
 def load_config(repos_folder, target_branch, remote_name, output_file,
-                diff_url_template) -> Config:
+                diff_url_template, bitbucket_base_url=None) -> Config:
     """Validate all inputs. Raises ConfigError with a clear message."""
     if not isinstance(target_branch, str) or parse_branch_name(target_branch) is None:
         raise ConfigError(
@@ -138,8 +153,24 @@ def load_config(repos_folder, target_branch, remote_name, output_file,
     if not isinstance(output_file, str) or not output_file:
         raise ConfigError("OUTPUT_FILE must be a non-empty path.")
     template = _validate_template(diff_url_template)
+    bb = _validate_bitbucket_base_url(bitbucket_base_url)
+    if bb and template:
+        raise ConfigError("Set either BITBUCKET_BASE_URL or DIFF_URL_TEMPLATE, not both.")
     return Config(os.path.abspath(repos_folder), parse_branch_name(target_branch),
-                  remote_name, output_file, template)
+                  remote_name, output_file, template, bb)
+
+
+def _validate_bitbucket_base_url(url) -> Optional[str]:
+    if url is None:
+        return None
+    if not isinstance(url, str) or not re.match(r"^https?://[^/\s?#]+(/[^\s?#]*)?$", url.strip()):
+        raise ConfigError(
+            f"BITBUCKET_BASE_URL {url!r} must be None or a web address such as "
+            "'https://bitbucket.mycompany.com' (no query string or #).")
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.username or parts.password:
+        raise ConfigError("BITBUCKET_BASE_URL must not contain a user name or password.")
+    return url.strip().rstrip("/")
 
 
 def _validate_template(tpl) -> Optional[Dict[str, str]]:
@@ -147,11 +178,13 @@ def _validate_template(tpl) -> Optional[Dict[str, str]]:
         return None
     if isinstance(tpl, (tuple, list)) and len(tpl) == 2:
         tpl = dict(zip(TEMPLATE_KEYS, tpl))
-    if not isinstance(tpl, dict) or set(tpl) != set(TEMPLATE_KEYS):
+    if (not isinstance(tpl, dict) or not set(TEMPLATE_KEYS) <= set(tpl)
+            or not set(tpl) <= set(TEMPLATE_KEYS + TEMPLATE_OPTIONAL_KEYS)):
         raise ConfigError(
             "DIFF_URL_TEMPLATE must be None or a pair of templates: "
-            "{'commit': '...', 'compare': '...'} (or a 2-tuple in that order).")
-    for key in TEMPLATE_KEYS:
+            "{'commit': '...', 'compare': '...'} (or a 2-tuple in that order), "
+            "optionally with a 'file' template.")
+    for key in tpl:
         value = tpl[key]
         if not isinstance(value, str) or not value:
             raise ConfigError(f"DIFF_URL_TEMPLATE[{key!r}] must be a non-empty string.")
@@ -228,6 +261,9 @@ class BranchSelection:
     ignored: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (ref, reason)
     outcome: str = ""                          # "ok" | "no_target" | "no_base" | "tie"
     tie: List[BranchName] = dataclasses.field(default_factory=list)
+    # other candidates with the same version as the chosen base (e.g. a hotfix/
+    # branch when release/ was preferred); shown on the page, never compared
+    same_version_as_base: List[BranchName] = dataclasses.field(default_factory=list)
 
 
 def list_remote_branches(repo: str) -> List[str]:
@@ -272,11 +308,20 @@ def select_branches(remote_refs: Sequence[str], remote: str, target: BranchName)
         return sel
     best = max(c.version_key for c in lower)
     closest = [c for c in lower if c.version_key == best]
-    if len(closest) > 1:
+    chosen = closest[0] if len(closest) == 1 else None
+    if chosen is None:
+        # Tie rule: when release/ and hotfix/ branches share the closest lower
+        # version, the single release/ branch is the base. Any other tie (two
+        # release/ branches, or only hotfix/ branches) is an error.
+        releases = [c for c in closest if c.kind == "release"]
+        if len(releases) == 1:
+            chosen = releases[0]
+    if chosen is None:
         sel.outcome = "tie"
         sel.tie = closest
         return sel
-    sel.base_ref = prefix + closest[0].name
+    sel.base_ref = prefix + chosen.name
+    sel.same_version_as_base = [c for c in closest if c is not chosen]
     sel.outcome = "ok"
     return sel
 
@@ -413,6 +458,30 @@ def _strip_trailing_newlines(text: str) -> str:
 #   these pages, so Azure links are not narrowed to the file (the spec allows
 #   this: "where the platform allows").
 #
+# Bitbucket Server / Data Center (self-hosted; used when BITBUCKET_BASE_URL is set
+# to an address other than https://bitbucket.org). <repo> = <BASE>/projects/<KEY>/repos/<slug>
+# (personal repositories "~user": <BASE>/users/<user>/repos/<slug>)
+#   commit : <repo>/commits/<sha>#<path>
+#   compare: <repo>/compare/diff?sourceBranch=refs%2Fheads%2F<target>
+#            &targetBranch=refs%2Fheads%2F<base>#<path>
+#   file   : <repo>/browse/<path>?at=<target commit>
+#   The file format is from Atlassian's Bitbucket Server API docs
+#   (NavBuilder.BrowseRepoResource: /browse/...?at=<ref or commit>) and a community
+#   answer quoting browse/<path>?at=<branch>. The commit and compare formats are
+#   the ones Bitbucket Server's own pages use; Atlassian doesn't document them, so
+#   check one link of each kind on your server. In compare/diff, "source" is the
+#   branch with the new changes (target) and "target" is the branch it would merge
+#   into (base). The project key and repository slug are used exactly as they
+#   appear in the remote URL.
+#
+# File links (column 1, "File ↗") open the file as it is at the target branch's
+# current commit (the hash comes from `git rev-parse`), and only for paths that exist
+# in that commit (`git ls-tree`), so deleted files get no file link:
+#   GitHub   {repo}/blob/<target commit>/<path>
+#   GitLab   {repo}/-/blob/<target commit>/<path>
+#   Bitbucket Cloud {repo}/src/<target commit>/<path>
+#   Azure    {repo}?path=/<path>&version=GC<target commit>
+#
 # Encoding: branch names are percent-encoded including "/" (-> %2F). File paths are
 # percent-encoded with "/" kept, because "/" separates folders in the URL path,
 # query and fragment.
@@ -424,7 +493,8 @@ KNOWN_HOSTS = {
     "dev.azure.com": "azure",
 }
 PLATFORM_LABELS = {"github": "GitHub", "gitlab": "GitLab", "bitbucket": "Bitbucket",
-                   "azure": "Azure DevOps", "template": "DIFF_URL_TEMPLATE"}
+                   "azure": "Azure DevOps", "template": "DIFF_URL_TEMPLATE",
+                   "bitbucket-server": "Bitbucket Server / Data Center (BITBUCKET_BASE_URL)"}
 
 
 def _enc_branch(name: str) -> str:
@@ -503,7 +573,7 @@ def remote_url_to_https(url: str) -> Tuple[Optional[str], Optional[str]]:
 
 @dataclasses.dataclass
 class LinkBuilder:
-    platform: Optional[str]          # github | gitlab | bitbucket | azure | template | None
+    platform: Optional[str]          # github | gitlab | bitbucket | bitbucket-server | azure | template | None
     base_url: Optional[str]
     template: Optional[Dict[str, str]] = None
     unavailable_reason: str = ""     # why there are no links (when platform is None)
@@ -525,6 +595,8 @@ class LinkBuilder:
             return f"{b}/commits/{commit}" + (f"#chg-{_enc_path(path)}" if path else "")
         if p == "azure":
             return f"{b}/commit/{commit}"
+        if p == "bitbucket-server":
+            return f"{b}/commits/{commit}" + (f"#{_enc_path(path)}" if path else "")
         return self._fill("commit", commit=commit, path=path)
 
     def compare_url(self, base: str, target: str, path: str) -> Optional[str]:
@@ -541,13 +613,40 @@ class LinkBuilder:
             return f"{b}/branches/compare/{et}%0D{eb}#chg-{ep}"
         if p == "azure":
             return f"{b}/branches?baseVersion=GB{eb}&targetVersion=GB{et}&_a=files"
+        if p == "bitbucket-server":
+            return (f"{b}/compare/diff?sourceBranch={_enc_branch('refs/heads/' + target)}"
+                    f"&targetBranch={_enc_branch('refs/heads/' + base)}#{ep}")
         return self._fill("compare", base=base, target=target, path=path)
 
+    @property
+    def has_file_links(self) -> bool:
+        if self.platform == "template":
+            return "file" in self.template
+        return self.platform is not None
+
+    def file_url(self, target_commit: str, path: str) -> Optional[str]:
+        """The file as it is at the target branch's commit."""
+        if not self.has_file_links:
+            return None
+        b, p, ep = self.base_url, self.platform, _enc_path(path)
+        if p == "github":
+            return f"{b}/blob/{target_commit}/{ep}"
+        if p == "gitlab":
+            return f"{b}/-/blob/{target_commit}/{ep}"
+        if p == "bitbucket":
+            return f"{b}/src/{target_commit}/{ep}"
+        if p == "azure":
+            return f"{b}?path=/{ep}&version=GC{target_commit}"
+        if p == "bitbucket-server":
+            return f"{b}/browse/{ep}?at={target_commit}"
+        return self._fill("file", path=path, target_commit=target_commit)
+
     def _fill(self, key: str, commit: str = "", base: str = "", target: str = "",
-              path: Optional[str] = None) -> str:
+              path: Optional[str] = None, target_commit: str = "") -> str:
         values = {
             "base_url": self.base_url or "",
             "commit": commit,
+            "target_commit": target_commit,
             "base": _enc_branch(base),
             "target": _enc_branch(target),
             "path": _enc_path(path) if path else "",
@@ -557,7 +656,47 @@ class LinkBuilder:
         return self.template[key].format_map(values)
 
 
-def make_link_builder(remote_url: Optional[str], template: Optional[Dict[str, str]]) -> LinkBuilder:
+def bitbucket_repo_path(remote_url: str) -> Optional[Tuple[str, str]]:
+    """(project or workspace, repository slug) from a Bitbucket remote URL, as written.
+
+    ssh://git@host:7999/proj/repo.git        -> ("proj", "repo")
+    https://host/scm/proj/repo.git           -> ("proj", "repo")
+    https://host/context/scm/~user/repo.git  -> ("~user", "repo")
+    git@bitbucket.org:workspace/repo.git     -> ("workspace", "repo")
+    """
+    base_url, _ = remote_url_to_https(remote_url)
+    if not base_url:
+        return None
+    path = urllib.parse.urlsplit(base_url).path
+    segs = [s for s in path.split("/") if s]
+    if "scm" in segs:
+        segs = segs[segs.index("scm") + 1:]
+    if len(segs) < 2:
+        return None
+    return segs[-2], segs[-1]
+
+
+def make_bitbucket_link_builder(remote_url: Optional[str], bitbucket_base_url: str) -> LinkBuilder:
+    if not remote_url:
+        return LinkBuilder(None, None, unavailable_reason="the remote URL could not be read")
+    owner_repo = bitbucket_repo_path(remote_url)
+    if not owner_repo:
+        return LinkBuilder(None, None, unavailable_reason=(
+            "BITBUCKET_BASE_URL is set, but the project and repository name can't be read "
+            "from the remote URL (for example, it is a local path)"))
+    owner, slug = (urllib.parse.quote(x, safe="~") for x in owner_repo)
+    host = (urllib.parse.urlsplit(bitbucket_base_url).hostname or "").lower()
+    if host == "bitbucket.org":
+        return LinkBuilder("bitbucket", f"{bitbucket_base_url}/{owner}/{slug}")
+    if owner.startswith("~"):
+        return LinkBuilder("bitbucket-server", f"{bitbucket_base_url}/users/{owner[1:]}/repos/{slug}")
+    return LinkBuilder("bitbucket-server", f"{bitbucket_base_url}/projects/{owner}/repos/{slug}")
+
+
+def make_link_builder(remote_url: Optional[str], template: Optional[Dict[str, str]],
+                      bitbucket_base_url: Optional[str] = None) -> LinkBuilder:
+    if bitbucket_base_url:
+        return make_bitbucket_link_builder(remote_url, bitbucket_base_url)
     if not remote_url:
         return LinkBuilder(None, None, unavailable_reason="the remote URL could not be read")
     base_url, host = remote_url_to_https(remote_url)
@@ -572,7 +711,7 @@ def make_link_builder(remote_url: Optional[str], template: Optional[Dict[str, st
         return LinkBuilder("template", base_url, template)
     return LinkBuilder(None, base_url, unavailable_reason=(
         "the remote host is not a recognised platform (GitHub, GitLab, Bitbucket, "
-        "Azure DevOps) and DIFF_URL_TEMPLATE is not set"))
+        "Azure DevOps) and neither BITBUCKET_BASE_URL nor DIFF_URL_TEMPLATE is set"))
 
 
 # --------------------------------------------------------------------------
@@ -593,6 +732,8 @@ class RepoReport:
     files: List[Tuple[str, List[Tuple[Commit, FileChange]]]] = dataclasses.field(default_factory=list)
     no_file_commits: List[Commit] = dataclasses.field(default_factory=list)
     links: Optional[LinkBuilder] = None
+    target_commit: Optional[str] = None                 # hash the target branch points to
+    target_paths: frozenset = frozenset()               # paths that exist in target_commit
 
     @property
     def target_branch(self) -> Optional[str]:
@@ -641,15 +782,16 @@ def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoRepo
             return rep
         if sel.outcome == "tie":
             names = ", ".join(f"`{remote}/{b.name}`" for b in sel.tie)
-            rep.reason = (f"More than one candidate branch has the closest lower version, so no "
-                          f"base branch was chosen: {names}")
+            rep.reason = (f"More than one candidate branch has the closest lower version, and "
+                          f"they are not one release/ branch plus hotfix/ branches, so no base "
+                          f"branch was chosen: {names}")
             return rep
 
         try:
             remote_url = run_git(rep.path, ["remote", "get-url", remote]).strip()
         except GitError:
             remote_url = None
-        rep.links = make_link_builder(remote_url, cfg.diff_url_template)
+        rep.links = make_link_builder(remote_url, cfg.diff_url_template, cfg.bitbucket_base_url)
 
         rep.commits = parse_log(run_git(rep.path, git_log_args(sel.base_ref, sel.target_ref)))
         if not rep.commits:
@@ -657,6 +799,12 @@ def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoRepo
             rep.reason = f"No commits on `{sel.target_ref}` that are not on `{sel.base_ref}`."
             return rep
         rep.files, rep.no_file_commits = group_by_file(rep.commits)
+        if rep.links.has_file_links:
+            ref = f"refs/remotes/{sel.target_ref}"
+            rep.target_commit = run_git(rep.path, ["rev-parse", "--verify", ref + "^{commit}"]).strip()
+            listing = run_git(rep.path, ["ls-tree", "-r", "-z", "--name-only", "--full-tree",
+                                         rep.target_commit])
+            rep.target_paths = frozenset(p for p in listing.split("\x00") if p)
         rep.state = STATE_CHANGES
         return rep
     except (GitError, LogParseError, OSError) as exc:
@@ -682,10 +830,12 @@ class Report:
     html: str
 
 
-def generate_report(repos_folder, target_branch, remote_name, output_file, diff_url_template, *, log: Callable[[str], None] = print,
+def generate_report(repos_folder, target_branch, remote_name, output_file, diff_url_template,
+                    bitbucket_base_url=None, *, log: Callable[[str], None] = print,
                     now: Optional[_dt.datetime] = None) -> Report:
     """Build the review page. Raises ConfigError for invalid inputs, before any git call."""
-    cfg = load_config(repos_folder, target_branch, remote_name, output_file, diff_url_template)
+    cfg = load_config(repos_folder, target_branch, remote_name, output_file, diff_url_template,
+                      bitbucket_base_url)
     generated = (now or _dt.datetime.now().astimezone()).isoformat(timespec="seconds")
 
     log(f"Target branch {cfg.target.name}: country {cfg.target.country}, "
@@ -755,7 +905,8 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
     w('<dl class="facts">\n')
     for k, v in (("Generated", generated), ("REPOS_FOLDER", cfg.repos_folder),
                  ("TARGET_BRANCH", cfg.target.name), ("Country", cfg.target.country),
-                 ("Version", cfg.target.version), ("Remote", cfg.remote_name)):
+                 ("Version", cfg.target.version), ("Remote", cfg.remote_name),
+                 ("BITBUCKET_BASE_URL", cfg.bitbucket_base_url or "")):
         w(f"<dt>{esc(k)}</dt><dd><code>{esc(v)}</code></dd>\n")
     w("</dl>\n")
 
@@ -786,7 +937,8 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
     w("</fieldset>\n")
     w('<button type="button" id="expand-all">Expand all</button>'
       '<button type="button" id="collapse-all">Collapse all</button>'
-      '<button type="button" id="clear-filters">Clear filters</button>\n')
+      '<button type="button" id="clear-filters">Clear filters</button>'
+      '<button type="button" id="toggle-details" aria-pressed="false">Hide changes column</button>\n')
     w('<span id="filter-state" class="filter-state" aria-live="polite"></span>\n')
     w("</div>\n<main>\n")
 
@@ -835,9 +987,17 @@ def _render_branch_block(w, r: RepoReport, remote: str):
                 tags.append('<span class="tag">target</span>')
             if ref == sel.base_ref:
                 tags.append('<span class="tag">base</span>')
+            if c in sel.same_version_as_base:
+                tags.append('<span class="tag tag-same">same version as base, not used</span>')
             w(f"<li><code>{esc(ref)}</code> {' '.join(tags)}</li>")
         w("</ul>")
-    w("</dd>\n</dl>\n")
+    w("</dd>\n")
+    if sel.same_version_as_base:
+        others = ", ".join(f"<code>{esc(remote + '/' + c.name)}</code>" for c in sel.same_version_as_base)
+        w(f'<dt>Same version as base</dt><dd class="same-version">{others} has the same version as '
+          f"the base branch. When release/ and hotfix/ share the closest lower version, the "
+          f"release/ branch is used as the base.</dd>\n")
+    w("</dl>\n")
 
 
 def _code_or_empty(v: Optional[str]) -> str:
@@ -875,29 +1035,40 @@ def _render_repo_changes(w, r: RepoReport, remote: str):
 
     base = r.base_branch[len(remote) + 1:]        # branch names without "<remote>/"
     target = r.target_branch[len(remote) + 1:]
+    # Two columns per file: column 1 = file path (with Compare link and anchor),
+    # column 2 = that file's changes (status, message, date, commit, user), which
+    # can be collapsed per file or for the whole page.
+    w('<div class="files">\n<div class="files-head"><div>File</div>'
+      '<div class="detail-label">Changes: status, commit message, date, commit id, user</div></div>\n')
     for path, entries in r.files:
         fid = anchor_id("file", r.name, path)
-        w(f'<details class="file" id="{esc(fid)}" open data-path="{esc(path)}">\n')
-        w(f'<summary class="file-head"><span class="path">{esc(path)}</span>')
         url = r.links.compare_url(base, target, path)
-        if url:
-            w(f' <a class="compare" href="{esc(url)}" {EXT}>Compare ↗</a>')
-        w(f'<a class="anchor" href="#{esc(fid)}" title="Link to this file">#</a></summary>\n')
-        w('<ol class="entries">\n')
-        for commit, ch in entries:
-            _render_entry(w, r, commit, ch)
-        w("</ol>\n</details>\n")
-
+        compare = f'<a class="compare" href="{esc(url)}" {EXT}>Compare ↗</a>' if url else ""
+        if r.target_commit and path in r.target_paths:
+            furl = r.links.file_url(r.target_commit, path)
+            if furl:
+                compare += (f' <a class="filelink" href="{esc(furl)}" {EXT} '
+                            f'title="File at {esc(r.target_branch)} ({esc(r.target_commit)})">File ↗</a>')
+        _render_file_row(w, r, fid, f'<span class="path">{esc(path)}</span>', path, compare,
+                         [(c, ch) for c, ch in entries], "file")
     if r.no_file_commits:
         fid = anchor_id("nofiles", r.name)
-        w(f'<details class="file nofiles" id="{esc(fid)}" open data-path="">\n')
-        w('<summary class="file-head"><span class="path">Commits with no file changes</span>'
-          f'<a class="anchor" href="#{esc(fid)}" title="Link to this section">#</a></summary>\n')
-        w('<ol class="entries">\n')
-        for commit in r.no_file_commits:
-            _render_entry(w, r, commit, None)
-        w("</ol>\n</details>\n")
-    w("</div>\n</details>\n")
+        _render_file_row(w, r, fid, '<span class="path">Commits with no file changes</span>', "", "",
+                         [(c, None) for c in r.no_file_commits], "file nofiles")
+    w("</div>\n</div>\n</details>\n")
+
+
+def _render_file_row(w, r: RepoReport, fid: str, label: str, path: str, compare: str,
+                     entries, classes: str):
+    w(f'<div class="{classes}" id="{esc(fid)}" data-path="{esc(path)}">\n')
+    w(f'<div class="file-col"><div class="file-col-inner">{label}'
+      f'<div class="file-links">{compare}'
+      f'<a class="anchor" href="#{esc(fid)}" title="Link to this file">#</a></div></div></div>\n')
+    w('<details class="detail-col" open><summary class="detail-head">Changes</summary>\n'
+      '<ol class="entries">\n')
+    for commit, ch in entries:
+        _render_entry(w, r, commit, ch)
+    w("</ol>\n</details>\n</div>\n")
 
 
 def _render_entry(w, r: RepoReport, c: Commit, ch: Optional[FileChange]):
@@ -976,13 +1147,33 @@ details.repo-no_change>.repo-head{background-color:#fbfbfc;font-weight:500;color
 .branches dt{color:var(--muted)}.branches dd{margin:0}
 .cands{margin:0;padding-left:18px}
 .tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
+.tag-same,.same-version{background:#fff8c5}
+.same-version{border:1px solid #d4a72c;border-radius:4px;padding:2px 6px}
 .note{background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:6px 10px}
 .note-small{color:var(--muted);font-size:12px;margin:2px 0 8px}
-details.file{border:1px solid var(--line);border-radius:6px;margin:8px 0}
-.file-head{position:sticky;top:calc(var(--tb-h) + var(--rh-h));z-index:10;background:var(--panel);padding:6px 10px;border-bottom:1px solid var(--line)}
-.file-head .path{font-weight:600;word-break:break-all}
-details.nofiles .file-head .path{font-family:inherit;font-style:italic}
-.compare{margin-left:10px;font-size:12px}
+.files{border:1px solid var(--line);border-radius:6px;margin:8px 0;background:#fff}
+.files-head,.file{display:grid;grid-template-columns:minmax(220px,34%) minmax(0,1fr)}
+.files-head{background:var(--panel);font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)}
+.files-head>div{padding:4px 10px}
+.files-head>div:first-child{border-right:1px solid var(--line)}
+.file{border-top:1px solid var(--line)}
+.files-head+.file{border-top:0}
+.file-col{background:var(--panel);border-right:1px solid var(--line);padding:8px 10px}
+.file-col-inner{position:sticky;top:calc(var(--tb-h) + var(--rh-h) + 6px)}
+.file-col .path{font-weight:600;word-break:break-all;font-size:13px}
+.nofiles .file-col .path{font-family:inherit;font-style:italic;font-weight:500}
+.file-links{margin-top:2px;font-size:12px}
+.file-links .anchor{margin-left:8px}
+.file-links .filelink{margin-left:10px}
+.detail-col>summary.detail-head{padding:3px 10px;font-size:12px;color:var(--muted);border-bottom:1px solid #eef1f4}
+.detail-col:not([open])>summary.detail-head{border-bottom:0}
+body.details-hidden .detail-col,body.details-hidden .detail-label{display:none}
+body.details-hidden .files-head,body.details-hidden .file{grid-template-columns:1fr}
+body.details-hidden .file-col,body.details-hidden .files-head>div:first-child{border-right:0}
+body.details-hidden .file-col{padding:4px 10px}
+body.details-hidden .file-col-inner{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline}
+body.details-hidden .file-links{margin-top:0}
+@media (max-width:800px){.files-head,.file{grid-template-columns:1fr}.file-col,.files-head>div:first-child{border-right:0}.files-head .detail-label{display:none}}
 .entries{list-style:none;margin:0;padding:0}
 .entry{padding:8px 10px;border-top:1px solid #eef1f4}
 .entry:first-child{border-top:0}
@@ -1001,10 +1192,13 @@ span.hash{color:var(--fg)}
 :target{scroll-margin-top:calc(var(--tb-h) + var(--rh-h) + 40px)}
 @media print{
  .toolbar,.anchor,.copy{display:none!important}
- .repo-head,.file-head{position:static}
+ .repo-head,.file-col-inner{position:static}
+ body.details-hidden .detail-col{display:block!important}
+ body.details-hidden .files-head,body.details-hidden .file{grid-template-columns:minmax(160px,30%) minmax(0,1fr)}
+ .detail-col>summary.detail-head{display:none}
  .filtered{display:revert!important}
  .no-match{display:none!important}
- details.repo,details.file{break-inside:auto}
+ details.repo,.file{break-inside:auto}
  a{color:inherit}
  body{font-size:11px}
 }
@@ -1024,7 +1218,7 @@ JS = r"""
 
   // Search index: file path(s), message, commit id, user name and email.
   var entries=q('li.entry').map(function(li){
-    var file=li.closest('details.file');
+    var file=li.closest('.file');
     var parts=[file?file.getAttribute('data-path'):''];
     ['.old-path','.msg','.hash','.an','.ae'].forEach(function(s){var e=li.querySelector(s); if(e) parts.push(e.textContent);});
     return {el:li,file:file,status:li.getAttribute('data-status'),text:parts.join('\n').toLowerCase()};
@@ -1042,12 +1236,12 @@ JS = r"""
       var ok=(allowed[e.status]!==false)&&(!term||e.text.indexOf(term)!==-1);
       e.el.classList.toggle('filtered',!ok);
     });
-    q('details.file').forEach(function(f){
+    q('.file').forEach(function(f){
       var any=f.querySelector('li.entry:not(.filtered)');
       f.classList.toggle('filtered',!any);
     });
     q('details.repo-changes').forEach(function(r){
-      var any=r.querySelector('details.file:not(.filtered)');
+      var any=r.querySelector('.file:not(.filtered)');
       var nm=r.querySelector('.no-match'); if(nm) nm.hidden=!!any;
     });
     stateEl.textContent=active?'Filter active: some entries are hidden. Clear filters to show everything.':'';
@@ -1057,7 +1251,14 @@ JS = r"""
   document.getElementById('clear-filters').addEventListener('click',function(){
     search.value=''; boxes.forEach(function(b){b.checked=true;}); apply();
   });
-  function setAll(open){q('details.repo,details.file').forEach(function(d){d.open=open;});}
+  function setAll(open){q('details.repo,details.detail-col').forEach(function(d){d.open=open;});}
+  var tgl=document.getElementById('toggle-details');
+  tgl.addEventListener('click',function(){
+    var hidden=document.body.classList.toggle('details-hidden');
+    tgl.textContent=hidden?'Show changes column':'Hide changes column';
+    tgl.setAttribute('aria-pressed',hidden?'true':'false');
+    setHeights();
+  });
   document.getElementById('expand-all').addEventListener('click',function(){setAll(true);});
   document.getElementById('collapse-all').addEventListener('click',function(){setAll(false);});
 
@@ -1093,7 +1294,8 @@ JS = r"""
 
 def main() -> int:
     try:
-        generate_report(REPOS_FOLDER, TARGET_BRANCH, REMOTE_NAME, OUTPUT_FILE, DIFF_URL_TEMPLATE)
+        generate_report(REPOS_FOLDER, TARGET_BRANCH, REMOTE_NAME, OUTPUT_FILE, DIFF_URL_TEMPLATE,
+                        BITBUCKET_BASE_URL)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
