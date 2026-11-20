@@ -1,0 +1,44 @@
+test_closest_lower_across_release_and_hotfix (test_git_history.BranchSelectionUnitTests.test_closest_lower_across_release_and_hotfix) ... ok
+test_numeric_not_lexicographic (test_git_history.BranchSelectionUnitTests.test_numeric_not_lexicographic) ... ok
+test_other_remote_ignored (test_git_history.BranchSelectionUnitTests.test_other_remote_ignored) ... ok
+test_bad_template (test_git_history.ConfigTests.test_bad_template) ... ok
+test_country_and_version (test_git_history.ConfigTests.test_country_and_version) ... ok
+test_invalid_branch_names (test_git_history.ConfigTests.test_invalid_branch_names) ... ok
+test_main_reports_config_error (test_git_history.ConfigTests.test_main_reports_config_error) ... ok
+test_missing_folder (test_git_history.ConfigTests.test_missing_folder) ... ok
+test_version_ordering (test_git_history.ConfigTests.test_version_ordering) ... ok
+test_base_is_closest_lower (test_git_history.IntegrationTests.test_base_is_closest_lower) ... ok
+test_candidates_listed_with_remote_prefix (test_git_history.IntegrationTests.test_candidates_listed_with_remote_prefix) ... ok
+test_content_exact (test_git_history.IntegrationTests.test_content_exact) ... ok
+test_discovery (test_git_history.IntegrationTests.test_discovery) ... ok
+test_fetch_failure_is_error_and_others_continue (test_git_history.IntegrationTests.test_fetch_failure_is_error_and_others_continue) ... ok
+test_file_and_repo_order (test_git_history.IntegrationTests.test_file_and_repo_order) ... ok
+test_html_escaping (test_git_history.IntegrationTests.test_html_escaping) ... ok
+test_identical_branches_no_change (test_git_history.IntegrationTests.test_identical_branches_no_change) ... ok
+test_ignored_branches_logged (test_git_history.IntegrationTests.test_ignored_branches_logged) ... ok
+test_local_refs_untouched (test_git_history.IntegrationTests.test_local_refs_untouched) ... ok
+test_missing_target_no_change_no_fallback (test_git_history.IntegrationTests.test_missing_target_no_change_no_fallback) ... ok
+test_multiline_message_kept (test_git_history.IntegrationTests.test_multiline_message_kept) ... ok
+test_no_links_for_unknown_platform (test_git_history.IntegrationTests.test_no_links_for_unknown_platform) ... ok
+test_no_previous_branch (test_git_history.IntegrationTests.test_no_previous_branch) ... ok
+test_output_file_written (test_git_history.IntegrationTests.test_output_file_written) ... ok
+test_scope_only_base_to_target (test_git_history.IntegrationTests.test_scope_only_base_to_target) ... ok
+test_template_without_web_url_gives_no_links (test_git_history.IntegrationTests.test_template_without_web_url_gives_no_links) ... ok
+test_tie_is_error (test_git_history.IntegrationTests.test_tie_is_error) ... ok
+test_top_of_page (test_git_history.IntegrationTests.test_top_of_page) ... ok
+test_azure (test_git_history.LinkIntegrationTests.test_azure) ... ok
+test_bitbucket (test_git_history.LinkIntegrationTests.test_bitbucket) ... ok
+test_github (test_git_history.LinkIntegrationTests.test_github) ... ok
+test_gitlab (test_git_history.LinkIntegrationTests.test_gitlab) ... ok
+test_path_encoding (test_git_history.LinkIntegrationTests.test_path_encoding) ... ok
+test_template_for_self_hosted (test_git_history.LinkIntegrationTests.test_template_for_self_hosted) ... ok
+test_unknown_host_without_template_has_no_links (test_git_history.LinkIntegrationTests.test_unknown_host_without_template_has_no_links) ... ok
+test_garbage_raises (test_git_history.ParseLogTests.test_garbage_raises) ... ok
+test_tricky_tokens (test_git_history.ParseLogTests.test_tricky_tokens) ... ok
+test_conversions (test_git_history.RemoteUrlTests.test_conversions) ... ok
+test_platform_only_for_clear_hosts (test_git_history.RemoteUrlTests.test_platform_only_for_clear_hosts) ... ok
+
+----------------------------------------------------------------------
+Ran 39 tests in 2.257s
+
+OK

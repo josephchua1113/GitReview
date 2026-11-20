@@ -1,0 +1,1104 @@
+#!/usr/bin/env python3
+"""Release review page generator.
+
+For every git repository directly inside REPOS_FOLDER, list the commits that are
+on the target release/hotfix branch but not on the closest lower branch of the
+same country, grouped by repository and then by file, as one static HTML page.
+
+Rules this script follows:
+  * Every value shown comes from git output (log, remote branch list, remote URL).
+    Nothing is inferred, summarised, counted or scored.
+  * Only remote-tracking refs (refs/remotes/<REMOTE_NAME>/...) are read. The only
+    command that changes anything is `git fetch <REMOTE_NAME> --prune`, which
+    updates remote-tracking refs. No checkout, merge, pull or working-tree change.
+  * Standard library only. git is called with argument lists (no shell).
+
+Run with no arguments:  python git_history.py
+"""
+
+# ===== CONFIGURATION =====
+REPOS_FOLDER      = "/path/to/repos"        # parent folder containing the git repositories
+TARGET_BRANCH     = "release/SG_19.18.0"    # branch being released: <release|hotfix>/<Country>_<Version>
+REMOTE_NAME       = "origin"                # remote to read branches from
+OUTPUT_FILE       = "index.html"            # generated HTML page
+DIFF_URL_TEMPLATE = None                    # only needed for self-hosted / unrecognised git hosts
+# DIFF_URL_TEMPLATE example (a pair: one template for commit links, one for compare links):
+# DIFF_URL_TEMPLATE = {
+#     "commit":  "{base_url}/commit/{commit}#diff-{path_sha256}",
+#     "compare": "{base_url}/compare/{base}...{target}#diff-{path_sha256}",
+# }
+# Placeholders: {base_url} {commit} {base} {target} {path} {path_sha256} {path_sha1}
+#   base/target are branch names without the "<REMOTE_NAME>/" prefix, URL-encoded
+#   (so "/" becomes %2F). path is URL-encoded with "/" kept. path_sha256 / path_sha1
+#   are hex digests of the UTF-8 file path. In commit links for commits that change
+#   no file, path, path_sha256 and path_sha1 are empty strings.
+# =========================
+
+import dataclasses
+import datetime as _dt
+import hashlib
+import html
+import os
+import re
+import string
+import subprocess
+import sys
+import urllib.parse
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+
+# --------------------------------------------------------------------------
+# Errors
+# --------------------------------------------------------------------------
+
+class ConfigError(Exception):
+    """Invalid configuration. Raised before any repository is touched."""
+
+
+class GitError(Exception):
+    """A git command failed."""
+
+    def __init__(self, args: Sequence[str], returncode: int, stderr: str):
+        self.git_args = list(args)
+        self.returncode = returncode
+        self.stderr = stderr
+        cmd = "git " + " ".join(args)
+        detail = stderr.strip() or "(no error output)"
+        super().__init__(f"`{cmd}` failed with exit code {returncode}:\n{detail}")
+
+
+class LogParseError(Exception):
+    """git log output did not have the expected structure."""
+
+
+# --------------------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------------------
+
+BRANCH_RE = re.compile(r"^(release|hotfix)/([A-Za-z]+)_([0-9]+(?:\.[0-9]+)*)$")
+TEMPLATE_KEYS = ("commit", "compare")
+TEMPLATE_PLACEHOLDERS = frozenset(
+    {"base_url", "commit", "base", "target", "path", "path_sha256", "path_sha1"})
+
+
+@dataclasses.dataclass(frozen=True)
+class BranchName:
+    """A branch name that follows <release|hotfix>/<Country>_<Version>."""
+    name: str                    # e.g. "release/SG_19.18.0" (no remote prefix)
+    kind: str                    # "release" or "hotfix"
+    country: str                 # e.g. "SG"
+    version: str                 # e.g. "19.18.0", exactly as written
+    version_key: Tuple[int, ...]  # numeric parts with trailing zeros removed
+
+
+def version_key(version: str) -> Tuple[int, ...]:
+    """Numeric, part-by-part comparison key: "19.9.0" < "19.17.1" < "19.18.0".
+
+    Trailing zero parts are dropped so "19.18" and "19.18.0" count as the same
+    version (and so are never treated as lower than each other).
+    """
+    parts = [int(p) for p in version.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def parse_branch_name(name: str) -> Optional[BranchName]:
+    m = BRANCH_RE.match(name)
+    if not m:
+        return None
+    kind, country, version = m.groups()
+    return BranchName(name, kind, country, version, version_key(version))
+
+
+@dataclasses.dataclass(frozen=True)
+class Config:
+    repos_folder: str
+    target: BranchName
+    remote_name: str
+    output_file: str
+    diff_url_template: Optional[Dict[str, str]]
+
+
+def load_config(repos_folder, target_branch, remote_name, output_file,
+                diff_url_template) -> Config:
+    """Validate all inputs. Raises ConfigError with a clear message."""
+    if not isinstance(target_branch, str) or parse_branch_name(target_branch) is None:
+        raise ConfigError(
+            f"TARGET_BRANCH {target_branch!r} does not follow the naming convention "
+            "<release|hotfix>/<Country>_<Version>, for example 'release/SG_19.18.0' "
+            "(Country: letters only; Version: dot-separated numbers).")
+    if not isinstance(repos_folder, str) or not repos_folder:
+        raise ConfigError("REPOS_FOLDER must be a non-empty path.")
+    if not os.path.isdir(repos_folder):
+        raise ConfigError(f"REPOS_FOLDER {repos_folder!r} does not exist or is not a folder.")
+    if (not isinstance(remote_name, str) or not remote_name
+            or remote_name.startswith("-") or "/" in remote_name or remote_name.strip() != remote_name):
+        raise ConfigError(f"REMOTE_NAME {remote_name!r} is not a valid remote name.")
+    if not isinstance(output_file, str) or not output_file:
+        raise ConfigError("OUTPUT_FILE must be a non-empty path.")
+    template = _validate_template(diff_url_template)
+    return Config(os.path.abspath(repos_folder), parse_branch_name(target_branch),
+                  remote_name, output_file, template)
+
+
+def _validate_template(tpl) -> Optional[Dict[str, str]]:
+    if tpl is None:
+        return None
+    if isinstance(tpl, (tuple, list)) and len(tpl) == 2:
+        tpl = dict(zip(TEMPLATE_KEYS, tpl))
+    if not isinstance(tpl, dict) or set(tpl) != set(TEMPLATE_KEYS):
+        raise ConfigError(
+            "DIFF_URL_TEMPLATE must be None or a pair of templates: "
+            "{'commit': '...', 'compare': '...'} (or a 2-tuple in that order).")
+    for key in TEMPLATE_KEYS:
+        value = tpl[key]
+        if not isinstance(value, str) or not value:
+            raise ConfigError(f"DIFF_URL_TEMPLATE[{key!r}] must be a non-empty string.")
+        try:
+            fields = [f for _, f, _, _ in string.Formatter().parse(value) if f is not None]
+        except ValueError as exc:
+            raise ConfigError(f"DIFF_URL_TEMPLATE[{key!r}] is not a valid template: {exc}")
+        unknown = sorted({f for f in fields if f not in TEMPLATE_PLACEHOLDERS})
+        if unknown:
+            raise ConfigError(
+                f"DIFF_URL_TEMPLATE[{key!r}] uses unknown placeholder(s) "
+                f"{', '.join('{' + u + '}' for u in unknown)}. Allowed: "
+                f"{', '.join('{' + p + '}' for p in sorted(TEMPLATE_PLACEHOLDERS))}.")
+        if not re.match(r"^\{base_url\}|^https?://", value):
+            raise ConfigError(
+                f"DIFF_URL_TEMPLATE[{key!r}] must start with {{base_url}} or http(s)://.")
+    return dict(tpl)
+
+
+# --------------------------------------------------------------------------
+# Running git
+# --------------------------------------------------------------------------
+
+_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+
+
+def _git_env() -> Dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV_DROP}
+    env["GIT_TERMINAL_PROMPT"] = "0"   # never block waiting for a password
+    return env
+
+
+def run_git(repo: str, args: Sequence[str]) -> str:
+    """Run git in `repo` and return stdout decoded as UTF-8 (undecodable bytes replaced)."""
+    proc = subprocess.run(["git", "-C", repo, *args], stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_git_env())
+    if proc.returncode != 0:
+        raise GitError(args, proc.returncode, proc.stderr.decode("utf-8", errors="replace"))
+    return proc.stdout.decode("utf-8", errors="replace")
+
+
+# --------------------------------------------------------------------------
+# Repository discovery
+# --------------------------------------------------------------------------
+
+def discover_repos(repos_folder: str) -> Tuple[List[str], List[str]]:
+    """Direct subfolders that contain a .git directory, and the skipped subfolders."""
+    repos, skipped = [], []
+    for entry in sorted(os.listdir(repos_folder), key=_sort_key):
+        path = os.path.join(repos_folder, entry)
+        if not os.path.isdir(path):
+            continue
+        if os.path.isdir(os.path.join(path, ".git")):
+            repos.append(entry)
+        else:
+            skipped.append(entry)
+    return repos, skipped
+
+
+def _sort_key(s: str):
+    return (s.casefold(), s)
+
+
+# --------------------------------------------------------------------------
+# Branch selection
+# --------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class BranchSelection:
+    target_ref: Optional[str] = None          # "origin/release/SG_19.18.0" if it exists
+    base_ref: Optional[str] = None            # "origin/hotfix/SG_19.17.1" if chosen
+    candidates: List[BranchName] = dataclasses.field(default_factory=list)
+    ignored: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (ref, reason)
+    outcome: str = ""                          # "ok" | "no_target" | "no_base" | "tie"
+    tie: List[BranchName] = dataclasses.field(default_factory=list)
+
+
+def list_remote_branches(repo: str) -> List[str]:
+    # `%(refname)` (full name) is used instead of `%(refname:short)`: the short form
+    # becomes "remotes/<remote>/..." when a local branch has the same name, which
+    # would silently drop that remote branch from the candidates.
+    out = run_git(repo, ["branch", "-r", "--format=%(refname)"])
+    refs = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("refs/remotes/"):
+            refs.append(line[len("refs/remotes/"):])
+        elif line:
+            refs.append(line)
+    return refs
+
+
+def select_branches(remote_refs: Sequence[str], remote: str, target: BranchName) -> BranchSelection:
+    sel = BranchSelection()
+    prefix = remote + "/"
+    for ref in remote_refs:
+        if not ref.startswith(prefix):
+            sel.ignored.append((ref, f"not on remote '{remote}'"))
+            continue
+        parsed = parse_branch_name(ref[len(prefix):])
+        if parsed is None:
+            sel.ignored.append((ref, "does not match <release|hotfix>/<Country>_<Version>"))
+        elif parsed.country != target.country:
+            sel.ignored.append((ref, f"country '{parsed.country}' is not '{target.country}'"))
+        else:
+            sel.candidates.append(parsed)
+    sel.candidates.sort(key=lambda b: (b.version_key, b.name))
+
+    if not any(c.name == target.name for c in sel.candidates):
+        sel.outcome = "no_target"
+        return sel
+    sel.target_ref = prefix + target.name
+
+    lower = [c for c in sel.candidates if c.version_key < target.version_key]
+    if not lower:
+        sel.outcome = "no_base"
+        return sel
+    best = max(c.version_key for c in lower)
+    closest = [c for c in lower if c.version_key == best]
+    if len(closest) > 1:
+        sel.outcome = "tie"
+        sel.tie = closest
+        return sel
+    sel.base_ref = prefix + closest[0].name
+    sel.outcome = "ok"
+    return sel
+
+
+# --------------------------------------------------------------------------
+# git log: fetch and parse
+# --------------------------------------------------------------------------
+
+# Field separator and markers. With `-z`, git separates every output token with NUL,
+# and NUL cannot occur in a commit message, author, email or date, so each field is
+# exactly one NUL-separated token. Paths are not quoted or escaped under -z.
+_COMMIT_MARK = "\x01COMMIT\x01"
+_END_MARK = "\x01END\x01"
+LOG_FORMAT = f"%x00{_COMMIT_MARK}%x00%H%x00%an%x00%ae%x00%ad%x00%B%x00{_END_MARK}"
+_STATUS_RE = re.compile(r"^([ACDMRTUXB])(\d*)$")
+
+
+@dataclasses.dataclass
+class FileChange:
+    status: str                 # letter: A C D M R T U X B
+    score: str                  # similarity score digits for R/C (e.g. "087"), else ""
+    path: str                   # path the commit is listed under (new path for R/C)
+    old_path: Optional[str] = None  # source path for R/C
+
+
+@dataclasses.dataclass
+class Commit:
+    hash: str
+    author_name: str
+    author_email: str
+    author_date: str
+    message: str
+    changes: List[FileChange]
+
+
+def git_log_args(base_ref: str, target_ref: str) -> List[str]:
+    """The git log command. Full refnames make sure only remote-tracking refs are read."""
+    return [
+        "log", f"refs/remotes/{base_ref}..refs/remotes/{target_ref}",
+        "--name-status", "--date=iso-strict", f"--format={LOG_FORMAT}",
+        "-z",                    # NUL-separated output, unquoted paths
+        "--encoding=UTF-8",      # re-encode messages that declare another encoding
+        "--no-color", "--no-show-signature", "--no-mailmap",
+        "--",
+    ]
+
+
+def parse_log(output: str) -> List[Commit]:
+    """Parse the output of git_log_args(). Commits are returned in git's order."""
+    tokens = output.split("\x00")
+    commits: List[Commit] = []
+    i, n = 0, len(tokens)
+    current: Optional[Commit] = None
+    while i < n:
+        tok = tokens[i]
+        if tok == _COMMIT_MARK:
+            if i + 6 >= n or tokens[i + 6] != _END_MARK:
+                raise LogParseError(f"unexpected git log output near token {i}")
+            h, an, ae, ad, body = tokens[i + 1:i + 6]
+            if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", h):
+                raise LogParseError(f"unexpected commit hash {h!r} in git log output")
+            current = Commit(h, an, ae, ad, _strip_trailing_newlines(body), [])
+            commits.append(current)
+            i += 7
+            continue
+        status_tok = tok.lstrip("\n")
+        if status_tok == "":
+            i += 1
+            continue
+        m = _STATUS_RE.match(status_tok)
+        if current is None or not m:
+            raise LogParseError(f"unexpected token {tok!r} in git log output")
+        letter, score = m.groups()
+        if letter in ("R", "C"):
+            if i + 2 >= n:
+                raise LogParseError("truncated rename/copy entry in git log output")
+            current.changes.append(FileChange(letter, score, tokens[i + 2], tokens[i + 1]))
+            i += 3
+        else:
+            if i + 1 >= n:
+                raise LogParseError("truncated file entry in git log output")
+            current.changes.append(FileChange(letter, score, tokens[i + 1]))
+            i += 2
+    return commits
+
+
+def _strip_trailing_newlines(text: str) -> str:
+    # git terminates each message with a newline; only trailing line breaks are
+    # removed. Everything else (including leading/inner blank lines) is kept.
+    return text.rstrip("\r\n")
+
+
+# --------------------------------------------------------------------------
+# Links
+# --------------------------------------------------------------------------
+#
+# Built-in formats. None of these platforms documents its per-file anchors, so each
+# format was checked against real links quoted in public sources:
+#   GitHub    - Stack Overflow question 44029061 (live compare link with a SHA-256 anchor)
+#   GitLab    - forum.gitlab.com topic 55921 (compare link; anchor = SHA-1 of the path)
+#   Azure     - Stack Overflow answer 60229869 (branch compare URL, GB/GC/GT prefixes)
+#   Bitbucket - Atlassian issues BCLOUD-11657 and BCLOUD-16327 (branches/compare/a%0Db)
+#
+# GitHub (github.com)
+#   commit : https://github.com/<owner>/<repo>/commit/<sha>#diff-<sha256(path)>
+#   compare: https://github.com/<owner>/<repo>/compare/<base>...<target>#diff-<sha256(path)>
+#   GitHub's commit and compare pages give each file's diff the anchor
+#   "diff-" + hex SHA-256 of the file path (the old MD5 anchors were replaced).
+#   "base...target" (three dots) shows what target has that base does not, i.e.
+#   the same range as `git log base..target`.
+#
+# GitLab (gitlab.com)
+#   commit : https://gitlab.com/<group>/<project>/-/commit/<sha>#<sha1(path)>
+#   compare: https://gitlab.com/<group>/<project>/-/compare/<base>...<target>#<sha1(path)>
+#   GitLab's diff file anchors are the hex SHA-1 of the file path. On very large
+#   compare pages that GitLab paginates, the anchor only scrolls when the file is
+#   on the first page. "base...target" compares from the merge base, like GitHub.
+#
+# Bitbucket Cloud (bitbucket.org)
+#   commit : https://bitbucket.org/<workspace>/<repo>/commits/<sha>#chg-<path>
+#   compare: https://bitbucket.org/<workspace>/<repo>/branches/compare/<target>%0D<base>#chg-<path>
+#   The "branches/compare/<a>%0D<b>" form is confirmed by Atlassian issues
+#   BCLOUD-11657 and BCLOUD-16327. The order used here, source (target, the branch
+#   with the new changes) first and destination (base) second, and the per-file
+#   anchor "chg-<path>" follow Bitbucket's own UI links; no written Atlassian
+#   documentation states them, so check one generated link before relying on it.
+#
+# Azure DevOps (dev.azure.com)
+#   commit : https://dev.azure.com/<org>/<project>/_git/<repo>/commit/<sha>
+#   compare: https://dev.azure.com/<org>/<project>/_git/<repo>/branches
+#            ?baseVersion=GB<base>&targetVersion=GB<target>&_a=files
+#   "GB" prefixes a branch name (GC = commit, GT = tag); _a=files opens the file
+#   diff tab. No documented URL parameter or anchor selects a single file on
+#   these pages, so Azure links are not narrowed to the file (the spec allows
+#   this: "where the platform allows").
+#
+# Encoding: branch names are percent-encoded including "/" (-> %2F). File paths are
+# percent-encoded with "/" kept, because "/" separates folders in the URL path,
+# query and fragment.
+
+KNOWN_HOSTS = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+    "bitbucket.org": "bitbucket",
+    "dev.azure.com": "azure",
+}
+PLATFORM_LABELS = {"github": "GitHub", "gitlab": "GitLab", "bitbucket": "Bitbucket",
+                   "azure": "Azure DevOps", "template": "DIFF_URL_TEMPLATE"}
+
+
+def _enc_branch(name: str) -> str:
+    return urllib.parse.quote(name, safe="")
+
+
+def _enc_path(path: str) -> str:
+    return urllib.parse.quote(path, safe="/")
+
+
+def _sha256(path: str) -> str:
+    return hashlib.sha256(path.encode("utf-8", errors="surrogateescape")).hexdigest()
+
+
+def _sha1(path: str) -> str:
+    return hashlib.sha1(path.encode("utf-8", errors="surrogateescape")).hexdigest()
+
+
+def remote_url_to_https(url: str) -> Tuple[Optional[str], Optional[str]]:
+    """Convert a git remote URL to (https base URL, host). (None, None) if not possible.
+
+    git@host:org/repo.git           -> https://host/org/repo
+    ssh://git@host:22/org/repo.git  -> https://host/org/repo
+    https://user:token@host/org/repo.git -> https://host/org/repo (credentials removed)
+    git@ssh.dev.azure.com:v3/org/project/repo -> https://dev.azure.com/org/project/_git/repo
+    Local paths and file:// URLs cannot be converted.
+    """
+    url = url.strip()
+    if not url:
+        return None, None
+    scheme_m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", url)
+    if scheme_m:
+        scheme = scheme_m.group(1).lower()
+        if scheme not in ("http", "https", "ssh", "git", "git+ssh", "ssh+git"):
+            return None, None
+        try:
+            parts = urllib.parse.urlsplit(url)
+            host = (parts.hostname or "").lower()
+            port = parts.port
+        except ValueError:          # malformed host or port
+            return None, None
+        if not host:
+            return None, None
+        path = parts.path
+        if scheme in ("http", "https"):
+            netloc = host + (f":{port}" if port else "")
+            out_scheme = scheme
+        else:
+            netloc = host          # an ssh/git port is not the web port
+            out_scheme = "https"
+    else:
+        # scp-like syntax: [user@]host:path  (no slash before the colon)
+        m = re.match(r"^(?:[^@/]+@)?([^:/]+):(.+)$", url)
+        if not m or os.path.exists(url):
+            return None, None
+        host = m.group(1).lower()
+        path = "/" + m.group(2).lstrip("/")
+        netloc = host
+        out_scheme = "https"
+    path = path.rstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not path.strip("/"):
+        return None, None
+
+    if host in ("ssh.dev.azure.com", "dev.azure.com"):
+        segs = [s for s in path.split("/") if s]
+        if host == "ssh.dev.azure.com":
+            # v3/<org>/<project>/<repo>
+            if len(segs) == 4 and segs[0] == "v3":
+                return f"https://dev.azure.com/{segs[1]}/{segs[2]}/_git/{segs[3]}", "dev.azure.com"
+            return None, None
+        return f"https://dev.azure.com{path}", "dev.azure.com"
+    return f"{out_scheme}://{netloc}{path}", host
+
+
+@dataclasses.dataclass
+class LinkBuilder:
+    platform: Optional[str]          # github | gitlab | bitbucket | azure | template | None
+    base_url: Optional[str]
+    template: Optional[Dict[str, str]] = None
+    unavailable_reason: str = ""     # why there are no links (when platform is None)
+
+    @property
+    def available(self) -> bool:
+        return self.platform is not None
+
+    def commit_url(self, commit: str, path: Optional[str]) -> Optional[str]:
+        if not self.available:
+            return None
+        b = self.base_url
+        p = self.platform
+        if p == "github":
+            return f"{b}/commit/{commit}" + (f"#diff-{_sha256(path)}" if path else "")
+        if p == "gitlab":
+            return f"{b}/-/commit/{commit}" + (f"#{_sha1(path)}" if path else "")
+        if p == "bitbucket":
+            return f"{b}/commits/{commit}" + (f"#chg-{_enc_path(path)}" if path else "")
+        if p == "azure":
+            return f"{b}/commit/{commit}"
+        return self._fill("commit", commit=commit, path=path)
+
+    def compare_url(self, base: str, target: str, path: str) -> Optional[str]:
+        if not self.available:
+            return None
+        b = self.base_url
+        p = self.platform
+        eb, et, ep = _enc_branch(base), _enc_branch(target), _enc_path(path)
+        if p == "github":
+            return f"{b}/compare/{eb}...{et}#diff-{_sha256(path)}"
+        if p == "gitlab":
+            return f"{b}/-/compare/{eb}...{et}#{_sha1(path)}"
+        if p == "bitbucket":
+            return f"{b}/branches/compare/{et}%0D{eb}#chg-{ep}"
+        if p == "azure":
+            return f"{b}/branches?baseVersion=GB{eb}&targetVersion=GB{et}&_a=files"
+        return self._fill("compare", base=base, target=target, path=path)
+
+    def _fill(self, key: str, commit: str = "", base: str = "", target: str = "",
+              path: Optional[str] = None) -> str:
+        values = {
+            "base_url": self.base_url or "",
+            "commit": commit,
+            "base": _enc_branch(base),
+            "target": _enc_branch(target),
+            "path": _enc_path(path) if path else "",
+            "path_sha256": _sha256(path) if path else "",
+            "path_sha1": _sha1(path) if path else "",
+        }
+        return self.template[key].format_map(values)
+
+
+def make_link_builder(remote_url: Optional[str], template: Optional[Dict[str, str]]) -> LinkBuilder:
+    if not remote_url:
+        return LinkBuilder(None, None, unavailable_reason="the remote URL could not be read")
+    base_url, host = remote_url_to_https(remote_url)
+    if host in KNOWN_HOSTS and base_url:
+        return LinkBuilder(KNOWN_HOSTS[host], base_url)
+    if template:
+        needs_base = any("{base_url}" in t for t in template.values())
+        if needs_base and not base_url:
+            return LinkBuilder(None, None, unavailable_reason=(
+                "DIFF_URL_TEMPLATE uses {base_url}, but the remote URL cannot be converted "
+                "to a web address (for example, it is a local path)"))
+        return LinkBuilder("template", base_url, template)
+    return LinkBuilder(None, base_url, unavailable_reason=(
+        "the remote host is not a recognised platform (GitHub, GitLab, Bitbucket, "
+        "Azure DevOps) and DIFF_URL_TEMPLATE is not set"))
+
+
+# --------------------------------------------------------------------------
+# Data model per repository
+# --------------------------------------------------------------------------
+
+STATE_ERROR, STATE_CHANGES, STATE_NO_CHANGE = "error", "changes", "no_change"
+
+
+@dataclasses.dataclass
+class RepoReport:
+    name: str
+    path: str
+    state: str = STATE_ERROR
+    reason: str = ""                                   # error / no-change message
+    selection: Optional[BranchSelection] = None
+    commits: List[Commit] = dataclasses.field(default_factory=list)
+    files: List[Tuple[str, List[Tuple[Commit, FileChange]]]] = dataclasses.field(default_factory=list)
+    no_file_commits: List[Commit] = dataclasses.field(default_factory=list)
+    links: Optional[LinkBuilder] = None
+
+    @property
+    def target_branch(self) -> Optional[str]:
+        return self.selection.target_ref if self.selection else None
+
+    @property
+    def base_branch(self) -> Optional[str]:
+        return self.selection.base_ref if self.selection else None
+
+
+def group_by_file(commits: Sequence[Commit]):
+    """Group (commit, change) pairs by file path, keeping git's commit order per file."""
+    by_path: Dict[str, List[Tuple[Commit, FileChange]]] = {}
+    no_files: List[Commit] = []
+    for c in commits:
+        if not c.changes:
+            no_files.append(c)
+        for ch in c.changes:
+            by_path.setdefault(ch.path, []).append((c, ch))
+    files = sorted(by_path.items(), key=lambda kv: _sort_key(kv[0]))
+    return files, no_files
+
+
+def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoReport:
+    rep = RepoReport(name=name, path=os.path.join(cfg.repos_folder, name))
+    remote = cfg.remote_name
+    target = cfg.target
+    try:
+        try:
+            run_git(rep.path, ["fetch", remote, "--prune"])
+        except GitError as exc:
+            rep.reason = f"Fetch failed, so no data is shown for this repository.\n{exc}"
+            return rep
+
+        sel = select_branches(list_remote_branches(rep.path), remote, target)
+        rep.selection = sel
+        for ref, why in sel.ignored:
+            log(f"  [{name}] ignored branch {ref}: {why}")
+
+        if sel.outcome == "no_target":
+            rep.state = STATE_NO_CHANGE
+            rep.reason = f"Branch `{target.name}` not found on remote."
+            return rep
+        if sel.outcome == "no_base":
+            rep.reason = f"No previous branch found for `{target.country}` below `{target.version}`"
+            return rep
+        if sel.outcome == "tie":
+            names = ", ".join(f"`{remote}/{b.name}`" for b in sel.tie)
+            rep.reason = (f"More than one candidate branch has the closest lower version, so no "
+                          f"base branch was chosen: {names}")
+            return rep
+
+        try:
+            remote_url = run_git(rep.path, ["remote", "get-url", remote]).strip()
+        except GitError:
+            remote_url = None
+        rep.links = make_link_builder(remote_url, cfg.diff_url_template)
+
+        rep.commits = parse_log(run_git(rep.path, git_log_args(sel.base_ref, sel.target_ref)))
+        if not rep.commits:
+            rep.state = STATE_NO_CHANGE
+            rep.reason = f"No commits on `{sel.target_ref}` that are not on `{sel.base_ref}`."
+            return rep
+        rep.files, rep.no_file_commits = group_by_file(rep.commits)
+        rep.state = STATE_CHANGES
+        return rep
+    except (GitError, LogParseError, OSError) as exc:
+        rep.state = STATE_ERROR
+        rep.reason = str(exc)
+        return rep
+    except Exception as exc:  # one failing repository must not stop the others
+        rep.state = STATE_ERROR
+        rep.reason = f"Unexpected error: {type(exc).__name__}: {exc}"
+        return rep
+
+
+# --------------------------------------------------------------------------
+# Main entry point
+# --------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class Report:
+    config: Config
+    generated_at: str
+    repos: List[RepoReport]
+    skipped: List[str]
+    html: str
+
+
+def generate_report(repos_folder, target_branch, remote_name, output_file, diff_url_template, *, log: Callable[[str], None] = print,
+                    now: Optional[_dt.datetime] = None) -> Report:
+    """Build the review page. Raises ConfigError for invalid inputs, before any git call."""
+    cfg = load_config(repos_folder, target_branch, remote_name, output_file, diff_url_template)
+    generated = (now or _dt.datetime.now().astimezone()).isoformat(timespec="seconds")
+
+    log(f"Target branch {cfg.target.name}: country {cfg.target.country}, "
+        f"version {cfg.target.version}")
+    repo_names, skipped = discover_repos(cfg.repos_folder)
+    for s in skipped:
+        log(f"Skipped (not a git repository): {s}")
+
+    reports = []
+    for name in repo_names:
+        log(f"Processing {name} ...")
+        rep = process_repo(cfg, name, log)
+        summary = {STATE_CHANGES: "changes", STATE_NO_CHANGE: "No change",
+                   STATE_ERROR: "ERROR"}[rep.state]
+        log(f"  [{name}] {summary}" + (f": {rep.reason}" if rep.reason else ""))
+        reports.append(rep)
+
+    page = render_html(cfg, generated, reports)
+    with open(cfg.output_file, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(page)
+    log(f"Wrote {os.path.abspath(cfg.output_file)}")
+    return Report(cfg, generated, reports, skipped, page)
+
+
+# --------------------------------------------------------------------------
+# HTML rendering
+# --------------------------------------------------------------------------
+
+STATUS_NAMES = {"A": "Added", "M": "Modified", "D": "Deleted", "R": "Renamed", "C": "Copied",
+                "T": "Type changed", "U": "Unmerged", "X": "Unknown", "B": "Broken pairing"}
+FILTER_STATUSES = ["A", "M", "D", "R", "C", "T", "U", "X", "B"]
+EXT = 'target="_blank" rel="noopener noreferrer"'
+
+
+def esc(text) -> str:
+    return html.escape("" if text is None else str(text), quote=True)
+
+
+def anchor_id(*parts: str) -> str:
+    """Stable, readable HTML id. Characters outside [A-Za-z0-9._/-] become ~HEX."""
+    out = []
+    for ch in "/".join(parts):
+        if re.match(r"[A-Za-z0-9._/-]", ch):
+            out.append(ch)
+        else:
+            out.append("~" + "".join(f"{b:02X}" for b in ch.encode("utf-8", "surrogateescape")))
+    return "".join(out)
+
+
+def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> str:
+    errors = [r for r in reports if r.state == STATE_ERROR]
+    changes = [r for r in reports if r.state == STATE_CHANGES]
+    nochange = [r for r in reports if r.state == STATE_NO_CHANGE]
+    present = sorted({ch.status for r in changes for c in r.commits for ch in c.changes},
+                     key=FILTER_STATUSES.index)
+    has_nofile = any(r.no_file_commits for r in changes)
+
+    out: List[str] = []
+    w = out.append
+    w("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+    w('<meta name="viewport" content="width=device-width, initial-scale=1">\n')
+    w(f"<title>Release review: {esc(cfg.target.name)}</title>\n<style>{CSS}</style>\n</head>\n<body>\n")
+
+    # ---- top: page facts ------------------------------------------------
+    w('<header class="page-head">\n')
+    w(f"<h1>Release review: <code>{esc(cfg.target.name)}</code></h1>\n")
+    w('<dl class="facts">\n')
+    for k, v in (("Generated", generated), ("REPOS_FOLDER", cfg.repos_folder),
+                 ("TARGET_BRANCH", cfg.target.name), ("Country", cfg.target.country),
+                 ("Version", cfg.target.version), ("Remote", cfg.remote_name)):
+        w(f"<dt>{esc(k)}</dt><dd><code>{esc(v)}</code></dd>\n")
+    w("</dl>\n")
+
+    w('<table class="overview"><thead><tr><th>Repository</th><th>State</th>'
+      "<th>Base branch → target branch</th></tr></thead><tbody>\n")
+    for group in (errors, changes, nochange):
+        for r in group:
+            state = {STATE_ERROR: '<span class="pill pill-error">Error</span>',
+                     STATE_CHANGES: '<span class="pill pill-changes">Changes</span>',
+                     STATE_NO_CHANGE: '<span class="pill pill-quiet">No change</span>'}[r.state]
+            w(f'<tr class="ov-{r.state}"><td><a href="#{esc(anchor_id("repo", r.name))}">'
+              f"{esc(r.name)}</a></td><td>{state}</td><td>{_branch_pair(r)}</td></tr>\n")
+    if not reports:
+        w('<tr><td colspan="3">No git repositories were found in REPOS_FOLDER.</td></tr>\n')
+    w("</tbody></table>\n</header>\n")
+
+    # ---- toolbar ---------------------------------------------------------
+    w('<div class="toolbar" id="toolbar">\n')
+    w('<input type="search" id="q" placeholder="Search file path, message, commit id, user" '
+      'aria-label="Search file path, commit message, commit id or user">\n')
+    w('<fieldset class="status-filter"><legend>Status</legend>\n')
+    for s in present:
+        w(f'<label><input type="checkbox" class="sf" value="{s}" checked> '
+          f'<span class="badge b-{s}">{s}</span> {esc(STATUS_NAMES[s])}</label>\n')
+    if has_nofile:
+        w('<label><input type="checkbox" class="sf" value="none" checked> '
+          "Commits with no file changes</label>\n")
+    w("</fieldset>\n")
+    w('<button type="button" id="expand-all">Expand all</button>'
+      '<button type="button" id="collapse-all">Collapse all</button>'
+      '<button type="button" id="clear-filters">Clear filters</button>\n')
+    w('<span id="filter-state" class="filter-state" aria-live="polite"></span>\n')
+    w("</div>\n<main>\n")
+
+    if errors:
+        w('<section class="group group-error"><h2 class="group-title">Repositories with errors</h2>\n')
+        for r in errors:
+            _render_repo_message(w, r, "error", cfg.remote_name)
+        w("</section>\n")
+    if changes:
+        w('<section class="group group-changes"><h2 class="group-title">Repositories with changes</h2>\n')
+        for r in changes:
+            _render_repo_changes(w, r, cfg.remote_name)
+        w("</section>\n")
+    if nochange:
+        w('<section class="group group-quiet"><h2 class="group-title">No change</h2>\n')
+        for r in nochange:
+            _render_repo_message(w, r, "quiet", cfg.remote_name)
+        w("</section>\n")
+
+    w(f"</main>\n<script>{JS}</script>\n</body>\n</html>\n")
+    return "".join(out)
+
+
+def _branch_pair(r: RepoReport) -> str:
+    if r.base_branch and r.target_branch:
+        return f"<code>{esc(r.base_branch)}</code> → <code>{esc(r.target_branch)}</code>"
+    if r.target_branch:
+        return f"→ <code>{esc(r.target_branch)}</code>"
+    return ""
+
+
+def _render_branch_block(w, r: RepoReport, remote: str):
+    sel = r.selection
+    if sel is None:
+        return
+    w('<dl class="branches">\n')
+    w(f"<dt>Target branch</dt><dd>{_code_or_empty(sel.target_ref)}</dd>\n")
+    w(f"<dt>Base branch</dt><dd>{_code_or_empty(sel.base_ref)}</dd>\n")
+    w("<dt>Matching candidate branches</dt><dd>")
+    if sel.candidates:
+        w('<ul class="cands">')
+        for c in sel.candidates:
+            ref = f"{remote}/{c.name}"
+            tags = []
+            if ref == sel.target_ref:
+                tags.append('<span class="tag">target</span>')
+            if ref == sel.base_ref:
+                tags.append('<span class="tag">base</span>')
+            w(f"<li><code>{esc(ref)}</code> {' '.join(tags)}</li>")
+        w("</ul>")
+    w("</dd>\n</dl>\n")
+
+
+def _code_or_empty(v: Optional[str]) -> str:
+    return f"<code>{esc(v)}</code>" if v else ""
+
+
+def _repo_summary(w, r: RepoReport, extra: str):
+    rid = anchor_id("repo", r.name)
+    w(f'<details class="repo repo-{r.state}" id="{esc(rid)}" open>\n')
+    w(f'<summary class="repo-head"><span class="repo-name">{esc(r.name)}</span> {extra}'
+      f'<a class="anchor" href="#{esc(rid)}" title="Link to this repository">#</a></summary>\n')
+
+
+def _render_repo_message(w, r: RepoReport, kind: str, remote: str):
+    label = ('<span class="pill pill-error">Error</span>' if kind == "error"
+             else '<span class="pill pill-quiet">No change</span>')
+    _repo_summary(w, r, label)
+    w('<div class="repo-body">\n')
+    w(f'<p class="reason reason-{kind}">{esc(r.reason)}</p>\n')
+    _render_branch_block(w, r, remote)
+    w("</div>\n</details>\n")
+
+
+def _render_repo_changes(w, r: RepoReport, remote: str):
+    _repo_summary(w, r, f'<span class="pair">[{_branch_pair(r)}]</span>')
+    w('<div class="repo-body">\n')
+    _render_branch_block(w, r, remote)
+    if not r.links.available:
+        w(f'<p class="note">Links aren’t available for this repository: '
+          f"{esc(r.links.unavailable_reason)}. Commit ids are shown as plain text.</p>\n")
+    else:
+        w(f'<p class="note-small">Links: {esc(PLATFORM_LABELS[r.links.platform])} '
+          f"(<code>{esc(r.links.base_url or '')}</code>)</p>\n")
+    w('<p class="no-match" hidden>No entries in this repository match the current search or status filter.</p>\n')
+
+    base = r.base_branch[len(remote) + 1:]        # branch names without "<remote>/"
+    target = r.target_branch[len(remote) + 1:]
+    for path, entries in r.files:
+        fid = anchor_id("file", r.name, path)
+        w(f'<details class="file" id="{esc(fid)}" open data-path="{esc(path)}">\n')
+        w(f'<summary class="file-head"><span class="path">{esc(path)}</span>')
+        url = r.links.compare_url(base, target, path)
+        if url:
+            w(f' <a class="compare" href="{esc(url)}" {EXT}>Compare ↗</a>')
+        w(f'<a class="anchor" href="#{esc(fid)}" title="Link to this file">#</a></summary>\n')
+        w('<ol class="entries">\n')
+        for commit, ch in entries:
+            _render_entry(w, r, commit, ch)
+        w("</ol>\n</details>\n")
+
+    if r.no_file_commits:
+        fid = anchor_id("nofiles", r.name)
+        w(f'<details class="file nofiles" id="{esc(fid)}" open data-path="">\n')
+        w('<summary class="file-head"><span class="path">Commits with no file changes</span>'
+          f'<a class="anchor" href="#{esc(fid)}" title="Link to this section">#</a></summary>\n')
+        w('<ol class="entries">\n')
+        for commit in r.no_file_commits:
+            _render_entry(w, r, commit, None)
+        w("</ol>\n</details>\n")
+    w("</div>\n</details>\n")
+
+
+def _render_entry(w, r: RepoReport, c: Commit, ch: Optional[FileChange]):
+    status = ch.status if ch else "none"
+    w(f'<li class="entry" data-status="{status}">')
+    if ch:
+        label = ch.status + ch.score
+        w(f'<span class="badge b-{ch.status}" title="{esc(STATUS_NAMES.get(ch.status, ""))}">'
+          f"{esc(label)}</span>")
+        w(f'<span class="status-name">{esc(STATUS_NAMES.get(ch.status, ""))}</span>')
+        if ch.old_path is not None:
+            w(f'<div class="rename"><span class="old-path">{esc(ch.old_path)}</span> → '
+              f'<span class="new-path">{esc(ch.path)}</span></div>')
+    w(f'<pre class="msg">{esc(c.message)}</pre>')
+    w('<div class="meta">')
+    w(f'<span class="date" title="Author date">{esc(c.author_date)}</span>')
+    url = r.links.commit_url(c.hash, ch.path if ch else None)
+    if url:
+        w(f'<a class="hash" href="{esc(url)}" {EXT}>{esc(c.hash)} ↗</a>')
+    else:
+        w(f'<span class="hash">{esc(c.hash)}</span>')
+    w(f'<button type="button" class="copy" data-copy="{esc(c.hash)}" '
+      'title="Copy commit id">Copy</button>')
+    email = f' <span class="ae">&lt;{esc(c.author_email)}&gt;</span>' if c.author_email else ""
+    w(f'<span class="user"><span class="an">{esc(c.author_name)}</span>{email}</span>')
+    w("</div></li>\n")
+
+
+CSS = r"""
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--accent:#0969da;
+--err-bg:#ffebe9;--err-line:#cf222e;--quiet:#818b98;--tb-h:0px;--rh-h:0px;
+--A:#1a7f37;--M:#0969da;--D:#cf222e;--R:#8250df;--C:#1b7c83;--T:#9a6700;--U:#6e7781;--X:#6e7781;--B:#6e7781}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg)}
+code,pre,.hash,.path,.old-path,.new-path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+.page-head{padding:16px 20px;border-bottom:1px solid var(--line)}
+h1{font-size:20px;margin:0 0 10px}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:2px 14px;margin:0 0 12px}
+.facts dt{color:var(--muted)}.facts dd{margin:0;word-break:break-all}
+.overview{border-collapse:collapse;width:100%;max-width:1100px}
+.overview th,.overview td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
+.overview th{background:var(--panel)}
+.overview tr.ov-error td{background:var(--err-bg)}
+.overview tr.ov-no_change td{color:var(--quiet)}
+.pill{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;border:1px solid}
+.pill-error{color:#fff;background:var(--err-line);border-color:var(--err-line)}
+.pill-changes{color:var(--accent);border-color:var(--accent)}
+.pill-quiet{color:var(--quiet);border-color:var(--line)}
+.toolbar{position:sticky;top:0;z-index:30;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar input[type=search]{flex:1 1 320px;min-width:200px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+.status-filter{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.status-filter legend{float:left;margin-right:6px;color:var(--muted);padding:0}
+.status-filter label{white-space:nowrap;cursor:pointer}
+.toolbar button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
+.filter-state{color:var(--muted);font-size:12px}
+main{padding:12px 20px 40px}
+.group{margin-bottom:28px}
+.group-title{font-size:16px;margin:8px 0;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.group-error .group-title{color:var(--err-line)}
+details.repo{border:1px solid var(--line);border-radius:8px;margin:0 0 14px;background:#fff}
+details.repo-error{border:2px solid var(--err-line);background:var(--err-bg)}
+details.repo-no_change{border-style:dashed;background:#fbfbfc;color:#424a53}
+summary{cursor:pointer;list-style:revert}
+.repo-head{position:sticky;top:var(--tb-h);z-index:20;background:inherit;background-color:#fff;padding:8px 12px;font-size:16px;font-weight:600;border-bottom:1px solid var(--line);border-radius:8px 8px 0 0}
+details.repo-error>.repo-head{background-color:var(--err-bg)}
+details.repo-no_change>.repo-head{background-color:#fbfbfc;font-weight:500;color:var(--quiet)}
+.repo-name{font-size:17px}
+.pair{font-weight:400;font-size:13px;margin-left:6px}
+.anchor{margin-left:8px;color:var(--quiet);text-decoration:none;font-weight:400}
+.anchor:hover{color:var(--accent)}
+.repo-body{padding:8px 12px 12px}
+.reason{white-space:pre-wrap;margin:4px 0 8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.reason-error{color:#82071e;font-weight:600}
+.reason-quiet{color:var(--muted)}
+.branches{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0 0 8px;font-size:13px}
+.branches dt{color:var(--muted)}.branches dd{margin:0}
+.cands{margin:0;padding-left:18px}
+.tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
+.note{background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:6px 10px}
+.note-small{color:var(--muted);font-size:12px;margin:2px 0 8px}
+details.file{border:1px solid var(--line);border-radius:6px;margin:8px 0}
+.file-head{position:sticky;top:calc(var(--tb-h) + var(--rh-h));z-index:10;background:var(--panel);padding:6px 10px;border-bottom:1px solid var(--line)}
+.file-head .path{font-weight:600;word-break:break-all}
+details.nofiles .file-head .path{font-family:inherit;font-style:italic}
+.compare{margin-left:10px;font-size:12px}
+.entries{list-style:none;margin:0;padding:0}
+.entry{padding:8px 10px;border-top:1px solid #eef1f4}
+.entry:first-child{border-top:0}
+.badge{display:inline-block;min-width:22px;text-align:center;padding:0 6px;border-radius:4px;color:#fff;font-weight:700;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.b-A{background:var(--A)}.b-M{background:var(--M)}.b-D{background:var(--D)}.b-R{background:var(--R)}
+.b-C{background:var(--C)}.b-T{background:var(--T)}.b-U,.b-X,.b-B{background:var(--U)}
+.status-name{margin-left:6px;color:var(--muted);font-size:12px}
+.rename{margin:4px 0;font-size:13px;word-break:break-all}
+.msg{white-space:pre-wrap;word-wrap:break-word;margin:6px 0;font-size:13px;background:none}
+.meta{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;color:var(--muted)}
+.hash{color:var(--accent);word-break:break-all}
+span.hash{color:var(--fg)}
+.copy{font:inherit;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer}
+.user .an{color:var(--fg);font-weight:600}
+.filtered{display:none!important}
+:target{scroll-margin-top:calc(var(--tb-h) + var(--rh-h) + 40px)}
+@media print{
+ .toolbar,.anchor,.copy{display:none!important}
+ .repo-head,.file-head{position:static}
+ .filtered{display:revert!important}
+ .no-match{display:none!important}
+ details.repo,details.file{break-inside:auto}
+ a{color:inherit}
+ body{font-size:11px}
+}
+"""
+
+JS = r"""
+(function(){
+  var root=document.documentElement;
+  function q(s,el){return Array.prototype.slice.call((el||document).querySelectorAll(s));}
+  function setHeights(){
+    var tb=document.getElementById('toolbar');
+    root.style.setProperty('--tb-h',(tb?tb.offsetHeight:0)+'px');
+    var rh=document.querySelector('.repo-head');
+    root.style.setProperty('--rh-h',(rh?rh.offsetHeight:0)+'px');
+  }
+  window.addEventListener('resize',setHeights); setHeights();
+
+  // Search index: file path(s), message, commit id, user name and email.
+  var entries=q('li.entry').map(function(li){
+    var file=li.closest('details.file');
+    var parts=[file?file.getAttribute('data-path'):''];
+    ['.old-path','.msg','.hash','.an','.ae'].forEach(function(s){var e=li.querySelector(s); if(e) parts.push(e.textContent);});
+    return {el:li,file:file,status:li.getAttribute('data-status'),text:parts.join('\n').toLowerCase()};
+  });
+  var search=document.getElementById('q');
+  var boxes=q('input.sf');
+  var stateEl=document.getElementById('filter-state');
+
+  function apply(){
+    var term=(search.value||'').trim().toLowerCase();
+    var allowed={}; boxes.forEach(function(b){allowed[b.value]=b.checked;});
+    var allOn=boxes.every(function(b){return b.checked;});
+    var active=!!term||!allOn;
+    entries.forEach(function(e){
+      var ok=(allowed[e.status]!==false)&&(!term||e.text.indexOf(term)!==-1);
+      e.el.classList.toggle('filtered',!ok);
+    });
+    q('details.file').forEach(function(f){
+      var any=f.querySelector('li.entry:not(.filtered)');
+      f.classList.toggle('filtered',!any);
+    });
+    q('details.repo-changes').forEach(function(r){
+      var any=r.querySelector('details.file:not(.filtered)');
+      var nm=r.querySelector('.no-match'); if(nm) nm.hidden=!!any;
+    });
+    stateEl.textContent=active?'Filter active: some entries are hidden. Clear filters to show everything.':'';
+  }
+  search.addEventListener('input',apply);
+  boxes.forEach(function(b){b.addEventListener('change',apply);});
+  document.getElementById('clear-filters').addEventListener('click',function(){
+    search.value=''; boxes.forEach(function(b){b.checked=true;}); apply();
+  });
+  function setAll(open){q('details.repo,details.file').forEach(function(d){d.open=open;});}
+  document.getElementById('expand-all').addEventListener('click',function(){setAll(true);});
+  document.getElementById('collapse-all').addEventListener('click',function(){setAll(false);});
+
+  // Open the sections that contain a linked anchor.
+  function openTarget(){
+    var id=location.hash.slice(1); try{id=decodeURIComponent(id);}catch(e){} if(!id) return;
+    var el=document.getElementById(id); if(!el) return;
+    for(var d=el; d; d=d.parentElement){ if(d.tagName==='DETAILS') d.open=true; }
+    el.scrollIntoView();
+  }
+  window.addEventListener('hashchange',openTarget); openTarget();
+
+  // Printing: expand every section (filters are ignored by the print stylesheet).
+  window.addEventListener('beforeprint',function(){setAll(true);});
+
+  // Copy commit id.
+  document.addEventListener('click',function(ev){
+    var b=ev.target.closest&&ev.target.closest('button.copy'); if(!b) return;
+    ev.preventDefault();
+    var text=b.getAttribute('data-copy');
+    function done(){var t=b.textContent; b.textContent='Copied'; setTimeout(function(){b.textContent=t;},1200);}
+    if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(done,fallback);}
+    else fallback();
+    function fallback(){
+      var ta=document.createElement('textarea'); ta.value=text; ta.setAttribute('readonly','');
+      ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select();
+      try{document.execCommand('copy'); done();}catch(e){} document.body.removeChild(ta);
+    }
+  });
+})();
+"""
+
+
+def main() -> int:
+    try:
+        generate_report(REPOS_FOLDER, TARGET_BRANCH, REMOTE_NAME, OUTPUT_FILE, DIFF_URL_TEMPLATE)
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

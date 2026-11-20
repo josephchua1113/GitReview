@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Release review: release/SG_19.18.0</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--accent:#0969da;
+--err-bg:#ffebe9;--err-line:#cf222e;--quiet:#818b98;--tb-h:0px;--rh-h:0px;
+--A:#1a7f37;--M:#0969da;--D:#cf222e;--R:#8250df;--C:#1b7c83;--T:#9a6700;--U:#6e7781;--X:#6e7781;--B:#6e7781}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg)}
+code,pre,.hash,.path,.old-path,.new-path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+.page-head{padding:16px 20px;border-bottom:1px solid var(--line)}
+h1{font-size:20px;margin:0 0 10px}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:2px 14px;margin:0 0 12px}
+.facts dt{color:var(--muted)}.facts dd{margin:0;word-break:break-all}
+.overview{border-collapse:collapse;width:100%;max-width:1100px}
+.overview th,.overview td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
+.overview th{background:var(--panel)}
+.overview tr.ov-error td{background:var(--err-bg)}
+.overview tr.ov-no_change td{color:var(--quiet)}
+.pill{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;border:1px solid}
+.pill-error{color:#fff;background:var(--err-line);border-color:var(--err-line)}
+.pill-changes{color:var(--accent);border-color:var(--accent)}
+.pill-quiet{color:var(--quiet);border-color:var(--line)}
+.toolbar{position:sticky;top:0;z-index:30;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar input[type=search]{flex:1 1 320px;min-width:200px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+.status-filter{border:0;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.status-filter legend{float:left;margin-right:6px;color:var(--muted);padding:0}
+.status-filter label{white-space:nowrap;cursor:pointer}
+.toolbar button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
+.filter-state{color:var(--muted);font-size:12px}
+main{padding:12px 20px 40px}
+.group{margin-bottom:28px}
+.group-title{font-size:16px;margin:8px 0;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.group-error .group-title{color:var(--err-line)}
+details.repo{border:1px solid var(--line);border-radius:8px;margin:0 0 14px;background:#fff}
+details.repo-error{border:2px solid var(--err-line);background:var(--err-bg)}
+details.repo-no_change{border-style:dashed;background:#fbfbfc;color:#424a53}
+summary{cursor:pointer;list-style:revert}
+.repo-head{position:sticky;top:var(--tb-h);z-index:20;background:inherit;background-color:#fff;padding:8px 12px;font-size:16px;font-weight:600;border-bottom:1px solid var(--line);border-radius:8px 8px 0 0}
+details.repo-error>.repo-head{background-color:var(--err-bg)}
+details.repo-no_change>.repo-head{background-color:#fbfbfc;font-weight:500;color:var(--quiet)}
+.repo-name{font-size:17px}
+.pair{font-weight:400;font-size:13px;margin-left:6px}
+.anchor{margin-left:8px;color:var(--quiet);text-decoration:none;font-weight:400}
+.anchor:hover{color:var(--accent)}
+.repo-body{padding:8px 12px 12px}
+.reason{white-space:pre-wrap;margin:4px 0 8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.reason-error{color:#82071e;font-weight:600}
+.reason-quiet{color:var(--muted)}
+.branches{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0 0 8px;font-size:13px}
+.branches dt{color:var(--muted)}.branches dd{margin:0}
+.cands{margin:0;padding-left:18px}
+.tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
+.note{background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:6px 10px}
+.note-small{color:var(--muted);font-size:12px;margin:2px 0 8px}
+details.file{border:1px solid var(--line);border-radius:6px;margin:8px 0}
+.file-head{position:sticky;top:calc(var(--tb-h) + var(--rh-h));z-index:10;background:var(--panel);padding:6px 10px;border-bottom:1px solid var(--line)}
+.file-head .path{font-weight:600;word-break:break-all}
+details.nofiles .file-head .path{font-family:inherit;font-style:italic}
+.compare{margin-left:10px;font-size:12px}
+.entries{list-style:none;margin:0;padding:0}
+.entry{padding:8px 10px;border-top:1px solid #eef1f4}
+.entry:first-child{border-top:0}
+.badge{display:inline-block;min-width:22px;text-align:center;padding:0 6px;border-radius:4px;color:#fff;font-weight:700;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.b-A{background:var(--A)}.b-M{background:var(--M)}.b-D{background:var(--D)}.b-R{background:var(--R)}
+.b-C{background:var(--C)}.b-T{background:var(--T)}.b-U,.b-X,.b-B{background:var(--U)}
+.status-name{margin-left:6px;color:var(--muted);font-size:12px}
+.rename{margin:4px 0;font-size:13px;word-break:break-all}
+.msg{white-space:pre-wrap;word-wrap:break-word;margin:6px 0;font-size:13px;background:none}
+.meta{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;color:var(--muted)}
+.hash{color:var(--accent);word-break:break-all}
+span.hash{color:var(--fg)}
+.copy{font:inherit;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer}
+.user .an{color:var(--fg);font-weight:600}
+.filtered{display:none!important}
+:target{scroll-margin-top:calc(var(--tb-h) + var(--rh-h) + 40px)}
+@media print{
+ .toolbar,.anchor,.copy{display:none!important}
+ .repo-head,.file-head{position:static}
+ .filtered{display:revert!important}
+ .no-match{display:none!important}
+ details.repo,details.file{break-inside:auto}
+ a{color:inherit}
+ body{font-size:11px}
+}
+</style>
+</head>
+<body>
+<header class="page-head">
+<h1>Release review: <code>release/SG_19.18.0</code></h1>
+<dl class="facts">
+<dt>Generated</dt><dd><code>2026-11-20T04:18:30+00:00</code></dd>
+<dt>REPOS_FOLDER</dt><dd><code>/tmp/ghtest-aszqgemo/repos</code></dd>
+<dt>TARGET_BRANCH</dt><dd><code>release/SG_19.18.0</code></dd>
+<dt>Country</dt><dd><code>SG</code></dd>
+<dt>Version</dt><dd><code>19.18.0</code></dd>
+<dt>Remote</dt><dd><code>origin</code></dd>
+</dl>
+<table class="overview"><thead><tr><th>Repository</th><th>State</th><th>Base branch → target branch</th></tr></thead><tbody>
+<tr class="ov-error"><td><a href="#repo/delta">delta</a></td><td><span class="pill pill-error">Error</span></td><td>→ <code>origin/release/SG_19.18.0</code></td></tr>
+<tr class="ov-error"><td><a href="#repo/gamma">gamma</a></td><td><span class="pill pill-error">Error</span></td><td>→ <code>origin/release/SG_19.18.0</code></td></tr>
+<tr class="ov-error"><td><a href="#repo/zeta">zeta</a></td><td><span class="pill pill-error">Error</span></td><td></td></tr>
+<tr class="ov-changes"><td><a href="#repo/alpha">alpha</a></td><td><span class="pill pill-changes">Changes</span></td><td><code>origin/hotfix/SG_19.17.1</code> → <code>origin/release/SG_19.18.0</code></td></tr>
+<tr class="ov-changes"><td><a href="#repo/click">click</a></td><td><span class="pill pill-changes">Changes</span></td><td><code>origin/hotfix/SG_19.17.1</code> → <code>origin/release/SG_19.18.0</code></td></tr>
+<tr class="ov-no_change"><td><a href="#repo/beta">beta</a></td><td><span class="pill pill-quiet">No change</span></td><td></td></tr>
+<tr class="ov-no_change"><td><a href="#repo/epsilon">epsilon</a></td><td><span class="pill pill-quiet">No change</span></td><td><code>origin/hotfix/SG_19.17.1</code> → <code>origin/release/SG_19.18.0</code></td></tr>
+</tbody></table>
+</header>
+<div class="toolbar" id="toolbar">
+<input type="search" id="q" placeholder="Search file path, message, commit id, user" aria-label="Search file path, commit message, commit id or user">
+<fieldset class="status-filter"><legend>Status</legend>
+<label><input type="checkbox" class="sf" value="A" checked> <span class="badge b-A">A</span> Added</label>
+<label><input type="checkbox" class="sf" value="M" checked> <span class="badge b-M">M</span> Modified</label>
+<label><input type="checkbox" class="sf" value="D" checked> <span class="badge b-D">D</span> Deleted</label>
+<label><input type="checkbox" class="sf" value="R" checked> <span class="badge b-R">R</span> Renamed</label>
+<label><input type="checkbox" class="sf" value="none" checked> Commits with no file changes</label>
+</fieldset>
+<button type="button" id="expand-all">Expand all</button><button type="button" id="collapse-all">Collapse all</button><button type="button" id="clear-filters">Clear filters</button>
+<span id="filter-state" class="filter-state" aria-live="polite"></span>
+</div>
+<main>
+<section class="group group-error"><h2 class="group-title">Repositories with errors</h2>
+<details class="repo repo-error" id="repo/delta" open>
+<summary class="repo-head"><span class="repo-name">delta</span> <span class="pill pill-error">Error</span><a class="anchor" href="#repo/delta" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<p class="reason reason-error">More than one candidate branch has the closest lower version, so no base branch was chosen: `origin/hotfix/SG_19.17`, `origin/release/SG_19.17.0`</p>
+<dl class="branches">
+<dt>Target branch</dt><dd><code>origin/release/SG_19.18.0</code></dd>
+<dt>Base branch</dt><dd></dd>
+<dt>Matching candidate branches</dt><dd><ul class="cands"><li><code>origin/release/SG_19.10.0</code> </li><li><code>origin/hotfix/SG_19.17</code> </li><li><code>origin/release/SG_19.17.0</code> </li><li><code>origin/release/SG_19.18.0</code> <span class="tag">target</span></li></ul></dd>
+</dl>
+</div>
+</details>
+<details class="repo repo-error" id="repo/gamma" open>
+<summary class="repo-head"><span class="repo-name">gamma</span> <span class="pill pill-error">Error</span><a class="anchor" href="#repo/gamma" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<p class="reason reason-error">No previous branch found for `SG` below `19.18.0`</p>
+<dl class="branches">
+<dt>Target branch</dt><dd><code>origin/release/SG_19.18.0</code></dd>
+<dt>Base branch</dt><dd></dd>
+<dt>Matching candidate branches</dt><dd><ul class="cands"><li><code>origin/hotfix/SG_19.18.0</code> </li><li><code>origin/release/SG_19.18.0</code> <span class="tag">target</span></li><li><code>origin/release/SG_20.0.0</code> </li></ul></dd>
+</dl>
+</div>
+</details>
+<details class="repo repo-error" id="repo/zeta" open>
+<summary class="repo-head"><span class="repo-name">zeta</span> <span class="pill pill-error">Error</span><a class="anchor" href="#repo/zeta" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<p class="reason reason-error">Fetch failed, so no data is shown for this repository.
+`git fetch origin --prune` failed with exit code 128:
+fatal: &#x27;/tmp/ghtest-aszqgemo/remotes/zeta.git&#x27; does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.</p>
+</div>
+</details>
+</section>
+<section class="group group-changes"><h2 class="group-title">Repositories with changes</h2>
+<details class="repo repo-changes" id="repo/alpha" open>
+<summary class="repo-head"><span class="repo-name">alpha</span> <span class="pair">[<code>origin/hotfix/SG_19.17.1</code> → <code>origin/release/SG_19.18.0</code>]</span><a class="anchor" href="#repo/alpha" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<dl class="branches">
+<dt>Target branch</dt><dd><code>origin/release/SG_19.18.0</code></dd>
+<dt>Base branch</dt><dd><code>origin/hotfix/SG_19.17.1</code></dd>
+<dt>Matching candidate branches</dt><dd><ul class="cands"><li><code>origin/release/SG_19.9.0</code> </li><li><code>origin/release/SG_19.17.0</code> </li><li><code>origin/hotfix/SG_19.17.1</code> <span class="tag">base</span></li><li><code>origin/release/SG_19.18.0</code> <span class="tag">target</span></li><li><code>origin/hotfix/SG_19.18.1</code> </li></ul></dd>
+</dl>
+<p class="note">Links aren’t available for this repository: the remote host is not a recognised platform (GitHub, GitLab, Bitbucket, Azure DevOps) and DIFF_URL_TEMPLATE is not set. Commit ids are shown as plain text.</p>
+<p class="no-match" hidden>No entries in this repository match the current search or status filter.</p>
+<details class="file" id="file/alpha/app/config.yml" open data-path="app/config.yml">
+<summary class="file-head"><span class="path">app/config.yml</span><a class="anchor" href="#file/alpha/app/config.yml" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add payment limits
+
+- first bullet
+- second &lt;b&gt;bullet&lt;/b&gt; &amp; &quot;quotes&quot;
+
+Signed-off-by: Alice Lim &lt;alice@example.com&gt;</pre><div class="meta"><span class="date" title="Author date">2024-03-05T10:05:00+08:00</span><span class="hash">86d829b24f67d4b40f303bd953576533f7f426ef</span><button type="button" class="copy" data-copy="86d829b24f67d4b40f303bd953576533f7f426ef" title="Copy commit id">Copy</button><span class="user"><span class="an">Zoë Tan</span> <span class="ae">&lt;zoe@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/alpha/b.txt" open data-path="b.txt">
+<summary class="file-head"><span class="path">b.txt</span><a class="anchor" href="#file/alpha/b.txt" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="D"><span class="badge b-D" title="Deleted">D</span><span class="status-name">Deleted</span><pre class="msg">Delete b.txt</pre><div class="meta"><span class="date" title="Author date">2024-03-07T10:07:00+08:00</span><span class="hash">0dcd89bbff1396ba3b90287e441c7518432f0779</span><button type="button" class="copy" data-copy="0dcd89bbff1396ba3b90287e441c7518432f0779" title="Copy commit id">Copy</button><span class="user"><span class="an">Alice Lim</span> <span class="ae">&lt;alice@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/alpha/docs/na~EFBFBDve~20~26~20~3Codd~3E~20name.md" open data-path="docs/na�ve &amp; &lt;odd&gt; name.md">
+<summary class="file-head"><span class="path">docs/na�ve &amp; &lt;odd&gt; name.md</span><a class="anchor" href="#file/alpha/docs/na~EFBFBDve~20~26~20~3Codd~3E~20name.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="A"><span class="badge b-A" title="Added">A</span><span class="status-name">Added</span><pre class="msg">Caf� latin-1 message</pre><div class="meta"><span class="date" title="Author date">2024-03-08T10:08:00+08:00</span><span class="hash">a66898788753b4b5721c9c7505c64376c7d12db2</span><button type="button" class="copy" data-copy="a66898788753b4b5721c9c7505c64376c7d12db2" title="Copy commit id">Copy</button><span class="user"><span class="an">Bob Ong</span> <span class="ae">&lt;bob@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/alpha/main2.txt" open data-path="main2.txt">
+<summary class="file-head"><span class="path">main2.txt</span><a class="anchor" href="#file/alpha/main2.txt" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="A"><span class="badge b-A" title="Added">A</span><span class="status-name">Added</span><pre class="msg">Main work</pre><div class="meta"><span class="date" title="Author date">2024-03-10T10:10:00+08:00</span><span class="hash">9faa65505d50d8f9c20f89cf3f4c534a525ed937</span><button type="button" class="copy" data-copy="9faa65505d50d8f9c20f89cf3f4c534a525ed937" title="Copy commit id">Copy</button><span class="user"><span class="an">Alice Lim</span> <span class="ae">&lt;alice@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/alpha/side.txt" open data-path="side.txt">
+<summary class="file-head"><span class="path">side.txt</span><a class="anchor" href="#file/alpha/side.txt" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="A"><span class="badge b-A" title="Added">A</span><span class="status-name">Added</span><pre class="msg">Side work</pre><div class="meta"><span class="date" title="Author date">2024-03-09T10:09:00+08:00</span><span class="hash">757ba47e967d8dd38f6923a603c33b7d63f8e79a</span><button type="button" class="copy" data-copy="757ba47e967d8dd38f6923a603c33b7d63f8e79a" title="Copy commit id">Copy</button><span class="user"><span class="an">Alice Lim</span> <span class="ae">&lt;alice@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/alpha/src/pay.py" open data-path="src/pay.py">
+<summary class="file-head"><span class="path">src/pay.py</span><a class="anchor" href="#file/alpha/src/pay.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="A"><span class="badge b-A" title="Added">A</span><span class="status-name">Added</span><pre class="msg">Add payment limits
+
+- first bullet
+- second &lt;b&gt;bullet&lt;/b&gt; &amp; &quot;quotes&quot;
+
+Signed-off-by: Alice Lim &lt;alice@example.com&gt;</pre><div class="meta"><span class="date" title="Author date">2024-03-05T10:05:00+08:00</span><span class="hash">86d829b24f67d4b40f303bd953576533f7f426ef</span><button type="button" class="copy" data-copy="86d829b24f67d4b40f303bd953576533f7f426ef" title="Copy commit id">Copy</button><span class="user"><span class="an">Zoë Tan</span> <span class="ae">&lt;zoe@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/alpha/src/renamed.txt" open data-path="src/renamed.txt">
+<summary class="file-head"><span class="path">src/renamed.txt</span><a class="anchor" href="#file/alpha/src/renamed.txt" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="R"><span class="badge b-R" title="Renamed">R100</span><span class="status-name">Renamed</span><div class="rename"><span class="old-path">a.txt</span> → <span class="new-path">src/renamed.txt</span></div><pre class="msg">Rename a.txt</pre><div class="meta"><span class="date" title="Author date">2024-03-06T10:06:00+08:00</span><span class="hash">6777ee77bb7a48927f9de965977020510c4e2e20</span><button type="button" class="copy" data-copy="6777ee77bb7a48927f9de965977020510c4e2e20" title="Copy commit id">Copy</button><span class="user"><span class="an">Alice Lim</span> <span class="ae">&lt;alice@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file nofiles" id="nofiles/alpha" open data-path="">
+<summary class="file-head"><span class="path">Commits with no file changes</span><a class="anchor" href="#nofiles/alpha" title="Link to this section">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;side&#x27;</pre><div class="meta"><span class="date" title="Author date">2024-04-01T09:00:00+08:00</span><span class="hash">7b6299d46ccc4f949ac1ea11515cfa1e3f6d8152</span><button type="button" class="copy" data-copy="7b6299d46ccc4f949ac1ea11515cfa1e3f6d8152" title="Copy commit id">Copy</button><span class="user"><span class="an">Merger</span> <span class="ae">&lt;m@example.com&gt;</span></span></div></li>
+</ol>
+</details>
+</div>
+</details>
+<details class="repo repo-changes" id="repo/click" open>
+<summary class="repo-head"><span class="repo-name">click</span> <span class="pair">[<code>origin/hotfix/SG_19.17.1</code> → <code>origin/release/SG_19.18.0</code>]</span><a class="anchor" href="#repo/click" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<dl class="branches">
+<dt>Target branch</dt><dd><code>origin/release/SG_19.18.0</code></dd>
+<dt>Base branch</dt><dd><code>origin/hotfix/SG_19.17.1</code></dd>
+<dt>Matching candidate branches</dt><dd><ul class="cands"><li><code>origin/release/SG_8.2.0</code> </li><li><code>origin/release/SG_8.3.0</code> </li><li><code>origin/hotfix/SG_8.3.3</code> </li><li><code>origin/release/SG_8.4.0</code> </li><li><code>origin/hotfix/SG_8.4.2</code> </li><li><code>origin/release/SG_19.9.0</code> </li><li><code>origin/hotfix/SG_19.17.1</code> <span class="tag">base</span></li><li><code>origin/release/SG_19.18.0</code> <span class="tag">target</span></li><li><code>origin/hotfix/SG_19.18.1</code> </li></ul></dd>
+</dl>
+<p class="note-small">Links: GitHub (<code>https://github.com/pallets/click</code>)</p>
+<p class="no-match" hidden>No entries in this repository match the current search or status filter.</p>
+<details class="file" id="file/click/.gitignore" open data-path=".gitignore">
+<summary class="file-head"><span class="path">.gitignore</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-bc37d034bad564583790a46f19d807abfe519c5671395fd494d8cce506c42947" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/.gitignore" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Cleanup #3126
+
+Link to PR in changelog, move implementation details to Python code, fix changed version and align `.gitignore` syntax</pre><div class="meta"><span class="date" title="Author date">2026-04-30T08:15:34+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/2fdde68324c386bd967b00ce422daa357432f7cd#diff-bc37d034bad564583790a46f19d807abfe519c5671395fd494d8cce506c42947" target="_blank" rel="noopener noreferrer">2fdde68324c386bd967b00ce422daa357432f7cd ↗</a><button type="button" class="copy" data-copy="2fdde68324c386bd967b00ce422daa357432f7cd" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix: Ensure fish completion handles multiline help strings correctly (#3126)</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:37:31+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/19fd4d6e18bc9fce451f92f422696b11169faa57#diff-bc37d034bad564583790a46f19d807abfe519c5671395fd494d8cce506c42947" target="_blank" rel="noopener noreferrer">19fd4d6e18bc9fce451f92f422696b11169faa57 ↗</a><button type="button" class="copy" data-copy="19fd4d6e18bc9fce451f92f422696b11169faa57" title="Copy commit id">Copy</button><span class="user"><span class="an">ReneS</span> <span class="ae">&lt;148054878+ReneSoltes@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/.pre-commit-config.yaml" open data-path=".pre-commit-config.yaml">
+<summary class="file-head"><span class="path">.pre-commit-config.yaml</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-63a9c44a44acf85fea213a857769990937107cf072831e1a26808cfde9d096b9" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/.pre-commit-config.yaml" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-63a9c44a44acf85fea213a857769990937107cf072831e1a26808cfde9d096b9" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/CHANGES.rst" open data-path="CHANGES.rst">
+<summary class="file-head"><span class="path">CHANGES.rst</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/CHANGES.rst" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Release 8.4.0</pre><div class="meta"><span class="date" title="Author date">2026-05-16T09:46:26-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/41f410fb7528305d7e87c8cfa704f6c2456f57fc#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">41f410fb7528305d7e87c8cfa704f6c2456f57fc ↗</a><button type="button" class="copy" data-copy="41f410fb7528305d7e87c8cfa704f6c2456f57fc" title="Copy commit id">Copy</button><span class="user"><span class="an">Edward Girling</span> <span class="ae">&lt;egirling@wallstreet.io&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix `HelpFormatter.write_usage` producing spurious characters
+
+Closes #3360</pre><div class="meta"><span class="date" title="Author date">2026-05-16T08:19:58+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0551bf53588ae87f462d336f24f853a156fefe3a#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">0551bf53588ae87f462d336f24f853a156fefe3a ↗</a><button type="button" class="copy" data-copy="0551bf53588ae87f462d336f24f853a156fefe3a" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix documentation</pre><div class="meta"><span class="date" title="Author date">2026-05-11T14:11:22+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/dbdae170879d460e78963f8af35c5cb9c5b86e89#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">dbdae170879d460e78963f8af35c5cb9c5b86e89 ↗</a><button type="button" class="copy" data-copy="dbdae170879d460e78963f8af35c5cb9c5b86e89" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add `capture` parameter to `CliRunner` and revert default-mode `fileno` exposure
+
+Closes: #3384
+Refs: #3244</pre><div class="meta"><span class="date" title="Author date">2026-03-05T10:07:38+04:00</span><a class="hash" href="https://github.com/pallets/click/commit/ad39d749be85af02bf191636062eef51323ad5ab#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">ad39d749be85af02bf191636062eef51323ad5ab ↗</a><button type="button" class="copy" data-copy="ad39d749be85af02bf191636062eef51323ad5ab" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Document short option stacking behavior
+
+Closes #2779</pre><div class="meta"><span class="date" title="Author date">2026-05-15T11:49:42+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/bd3b2d6b0fb1f186afb9a3ad72909f0b95392f67#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">bd3b2d6b0fb1f186afb9a3ad72909f0b95392f67 ↗</a><button type="button" class="copy" data-copy="bd3b2d6b0fb1f186afb9a3ad72909f0b95392f67" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Deduplicate deprecated label translation
+
+Refs #3423</pre><div class="meta"><span class="date" title="Author date">2026-05-15T13:09:15+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/c040135a74180d65c97c66614f234ea89c337ceb#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">c040135a74180d65c97c66614f234ea89c337ceb ↗</a><button type="button" class="copy" data-copy="c040135a74180d65c97c66614f234ea89c337ceb" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add missing changelog entry
+
+Refs: #2902</pre><div class="meta"><span class="date" title="Author date">2026-05-08T06:57:22+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/5dd4acdc7b8f99d29603404b3b8d25b1fe9e52e8#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">5dd4acdc7b8f99d29603404b3b8d25b1fe9e52e8 ↗</a><button type="button" class="copy" data-copy="5dd4acdc7b8f99d29603404b3b8d25b1fe9e52e8" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Cleanup #3126
+
+Link to PR in changelog, move implementation details to Python code, fix changed version and align `.gitignore` syntax</pre><div class="meta"><span class="date" title="Author date">2026-04-30T08:15:34+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/2fdde68324c386bd967b00ce422daa357432f7cd#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">2fdde68324c386bd967b00ce422daa357432f7cd ↗</a><button type="button" class="copy" data-copy="2fdde68324c386bd967b00ce422daa357432f7cd" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add missing changelog entries
+
+Refs: #3372</pre><div class="meta"><span class="date" title="Author date">2026-04-30T07:38:06+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/cf1d891909fa19d40e7c60642b07a0f973a86320#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">cf1d891909fa19d40e7c60642b07a0f973a86320 ↗</a><button type="button" class="copy" data-copy="cf1d891909fa19d40e7c60642b07a0f973a86320" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix dual-option arbitration to respect explicit defaults
+
+Closes #3403</pre><div class="meta"><span class="date" title="Author date">2026-05-15T11:55:32+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0f71fe771ceefd5715b3b375c9b2e3a701c0648e#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">0f71fe771ceefd5715b3b375c9b2e3a701c0648e ↗</a><button type="button" class="copy" data-copy="0f71fe771ceefd5715b3b375c9b2e3a701c0648e" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware</pre><div class="meta"><span class="date" title="Author date">2026-05-12T17:00:35+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/d946074a8fd4bd743dcde12e08e1561f062a2a68#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">d946074a8fd4bd743dcde12e08e1561f062a2a68 ↗</a><button type="button" class="copy" data-copy="d946074a8fd4bd743dcde12e08e1561f062a2a68" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">fix: show custom error message in prompt with hide_input=True</pre><div class="meta"><span class="date" title="Author date">2026-03-11T01:28:21+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/a09c1c655eef3d43181eb46036b66cf058d72df4#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">a09c1c655eef3d43181eb46036b66cf058d72df4 ↗</a><button type="button" class="copy" data-copy="a09c1c655eef3d43181eb46036b66cf058d72df4" title="Copy commit id">Copy</button><span class="user"><span class="an">doiken</span> <span class="ae">&lt;doiken@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`FuncParamType` should use `ValueError` message in `self.fail()` (#3211)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T16:47:47+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1 ↗</a><button type="button" class="copy" data-copy="fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1" title="Copy commit id">Copy</button><span class="user"><span class="an">STEPHEN OTIENO ONYANGO</span> <span class="ae">&lt;142543761+StevOti@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Move #1572 changelog entry to correct version entry (8.4.0).</pre><div class="meta"><span class="date" title="Author date">2026-04-30T23:02:56+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/fed9049f7a07550d560a91b30c5b0b3e17d54981#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">fed9049f7a07550d560a91b30c5b0b3e17d54981 ↗</a><button type="button" class="copy" data-copy="fed9049f7a07550d560a91b30c5b0b3e17d54981" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;andreas@backx.org&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix: Ensure fish completion handles multiline help strings correctly (#3126)</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:37:31+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/19fd4d6e18bc9fce451f92f422696b11169faa57#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">19fd4d6e18bc9fce451f92f422696b11169faa57 ↗</a><button type="button" class="copy" data-copy="19fd4d6e18bc9fce451f92f422696b11169faa57" title="Copy commit id">Copy</button><span class="user"><span class="an">ReneS</span> <span class="ae">&lt;148054878+ReneSoltes@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">fix: `_termui_impl.open_url()` — &#x27;start&#x27; on Windows is a cmd built-in, not an executable (#3186)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:25:38+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/c5cced7b3096804567688df645194e3ed3dfa88b#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">c5cced7b3096804567688df645194e3ed3dfa88b ↗</a><button type="button" class="copy" data-copy="c5cced7b3096804567688df645194e3ed3dfa88b" title="Copy commit id">Copy</button><span class="user"><span class="an">Adam Karpierz</span> <span class="ae">&lt;karpierz@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix readline backspace/line-wrapping on linux (#2969)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-29T16:20:22-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/2468b70997a6ec27ced4b4867954c90da3f92075#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">2468b70997a6ec27ced4b4867954c90da3f92075 ↗</a><button type="button" class="copy" data-copy="2468b70997a6ec27ced4b4867954c90da3f92075" title="Copy commit id">Copy</button><span class="user"><span class="an">Yorick</span> <span class="ae">&lt;yorickvanpelt@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`Parameter` typing improvements (#2805)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T00:11:47+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/ddede2147c9370ab8275f81db4826b6895d2e7dc#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">ddede2147c9370ab8275f81db4826b6895d2e7dc ↗</a><button type="button" class="copy" data-copy="ddede2147c9370ab8275f81db4826b6895d2e7dc" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Move changes to correct section</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:56:20-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/a34f960488e777ae795c41de7d33ae3c6edeb6fb#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">a34f960488e777ae795c41de7d33ae3c6edeb6fb ↗</a><button type="button" class="copy" data-copy="a34f960488e777ae795c41de7d33ae3c6edeb6fb" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix bad merge in changes</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:50:02-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/3ca8f96c7568ee8ec1ba604d603821d0762243f5#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">3ca8f96c7568ee8ec1ba604d603821d0762243f5 ↗</a><button type="button" class="copy" data-copy="3ca8f96c7568ee8ec1ba604d603821d0762243f5" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Put changes in correct section.</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:43:42-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/235e03ee0cb8d575630427158393a9c6fce39b31#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">235e03ee0cb8d575630427158393a9c6fce39b31 ↗</a><button type="button" class="copy" data-copy="235e03ee0cb8d575630427158393a9c6fce39b31" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Put changes in correct section</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:37:00-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/94004f1b5a4a982e8e33ef8d5f00cfb0e1dabddd#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">94004f1b5a4a982e8e33ef8d5f00cfb0e1dabddd ↗</a><button type="button" class="copy" data-copy="94004f1b5a4a982e8e33ef8d5f00cfb0e1dabddd" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Split string values from `default_map` for multi-value parameters
+
+Fixes #2745</pre><div class="meta"><span class="date" title="Author date">2026-04-21T16:58:25+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/3a3e0350b6a2ea3e799440d48e779acabcf44de9#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">3a3e0350b6a2ea3e799440d48e779acabcf44de9 ↗</a><button type="button" class="copy" data-copy="3a3e0350b6a2ea3e799440d48e779acabcf44de9" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">ParamType typing improvements
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-22T18:46:54+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/5989375dc3953a5709c411e11f658c242319858e#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">5989375dc3953a5709c411e11f658c242319858e ↗</a><button type="button" class="copy" data-copy="5989375dc3953a5709c411e11f658c242319858e" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Use non-shadowed help option name in error hint
+
+Fix #2790.
+
+Co-authored-by: Mr-Neutr0n &lt;64578610+Mr-Neutr0n@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-21T17:56:16+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/1241abaed4e441582a21f4bf90c8482de02b92df#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">1241abaed4e441582a21f4bf90c8482de02b92df ↗</a><button type="button" class="copy" data-copy="1241abaed4e441582a21f4bf90c8482de02b92df" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Auto-detect `type=UNPROCESSED` when `flag_value` has non-basic types
+
+Closes #2012</pre><div class="meta"><span class="date" title="Author date">2026-04-21T12:55:57+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b#diff-ff3c479edefad986d2fe6fe7ead575a46b086e3bbcf0ccc86d85efc4a4c63c79" target="_blank" rel="noopener noreferrer">4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b ↗</a><button type="button" class="copy" data-copy="4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/api.md" open data-path="docs/api.md">
+<summary class="file-head"><span class="path">docs/api.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-9eddf4dc51bf6a0125ca7fb094468ad284112270385c41cebce4f8f0a29620ab" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/api.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-9eddf4dc51bf6a0125ca7fb094468ad284112270385c41cebce4f8f0a29620ab" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/commands.md" open data-path="docs/commands.md">
+<summary class="file-head"><span class="path">docs/commands.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-e2c7369e0995500500b1f573c0efb5d7a018c94e443bac87948f3caecd7e905e" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/commands.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Split string values from `default_map` for multi-value parameters
+
+Fixes #2745</pre><div class="meta"><span class="date" title="Author date">2026-04-21T16:58:25+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/3a3e0350b6a2ea3e799440d48e779acabcf44de9#diff-e2c7369e0995500500b1f573c0efb5d7a018c94e443bac87948f3caecd7e905e" target="_blank" rel="noopener noreferrer">3a3e0350b6a2ea3e799440d48e779acabcf44de9 ↗</a><button type="button" class="copy" data-copy="3a3e0350b6a2ea3e799440d48e779acabcf44de9" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/conf.py" open data-path="docs/conf.py">
+<summary class="file-head"><span class="path">docs/conf.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-85933aa74a2d66c3e4dcdf7a9ad8397f5a7971080d34ef1108296a7c6b69e7e3" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/conf.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Split string values from `default_map` for multi-value parameters
+
+Fixes #2745</pre><div class="meta"><span class="date" title="Author date">2026-04-21T16:58:25+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/3a3e0350b6a2ea3e799440d48e779acabcf44de9#diff-85933aa74a2d66c3e4dcdf7a9ad8397f5a7971080d34ef1108296a7c6b69e7e3" target="_blank" rel="noopener noreferrer">3a3e0350b6a2ea3e799440d48e779acabcf44de9 ↗</a><button type="button" class="copy" data-copy="3a3e0350b6a2ea3e799440d48e779acabcf44de9" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/contributing.md" open data-path="docs/contributing.md">
+<summary class="file-head"><span class="path">docs/contributing.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-419d79ae7d440d49b3fa5fa7739f5f3a359e3ca42c3fa942e5604ae3474eb35b" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/contributing.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Compile Click-specific guidelines
+
+Reformat whole file to 80 characters limit
+Refs:
+https://github.com/pallets/click/pull/3239/changes#r3058361631
+https://github.com/pallets/website/pull/13
+https://github.com/pallets/.github/pull/3</pre><div class="meta"><span class="date" title="Author date">2026-04-10T09:19:46+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/32ac271a8c566945c6b60d8ee4c74f82284594cb#diff-419d79ae7d440d49b3fa5fa7739f5f3a359e3ca42c3fa942e5604ae3474eb35b" target="_blank" rel="noopener noreferrer">32ac271a8c566945c6b60d8ee4c74f82284594cb ↗</a><button type="button" class="copy" data-copy="32ac271a8c566945c6b60d8ee4c74f82284594cb" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/options.md" open data-path="docs/options.md">
+<summary class="file-head"><span class="path">docs/options.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-2e046795c81fb2bcc2667705f88c6421fa988047f147ddb2333ec8da5f638b7b" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/options.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Document short option stacking behavior
+
+Closes #2779</pre><div class="meta"><span class="date" title="Author date">2026-05-15T11:49:42+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/bd3b2d6b0fb1f186afb9a3ad72909f0b95392f67#diff-2e046795c81fb2bcc2667705f88c6421fa988047f147ddb2333ec8da5f638b7b" target="_blank" rel="noopener noreferrer">bd3b2d6b0fb1f186afb9a3ad72909f0b95392f67 ↗</a><button type="button" class="copy" data-copy="bd3b2d6b0fb1f186afb9a3ad72909f0b95392f67" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix dual-option arbitration to respect explicit defaults
+
+Closes #3403</pre><div class="meta"><span class="date" title="Author date">2026-05-15T11:55:32+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0f71fe771ceefd5715b3b375c9b2e3a701c0648e#diff-2e046795c81fb2bcc2667705f88c6421fa988047f147ddb2333ec8da5f638b7b" target="_blank" rel="noopener noreferrer">0f71fe771ceefd5715b3b375c9b2e3a701c0648e ↗</a><button type="button" class="copy" data-copy="0f71fe771ceefd5715b3b375c9b2e3a701c0648e" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/parameter-types.md" open data-path="docs/parameter-types.md">
+<summary class="file-head"><span class="path">docs/parameter-types.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-799aa1229e6989f2e4fcef01139cee6266537e1463d0c1c81c3bd41ef13cf832" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/parameter-types.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Update examples in docs, adds version update admonitions
+
+Refs: https://github.com/pallets/click/pull/3371#pullrequestreview-4173325028</pre><div class="meta"><span class="date" title="Author date">2026-04-27T16:37:02+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/ded5b692472629154ab5a2f63bd7cdd4deea3146#diff-799aa1229e6989f2e4fcef01139cee6266537e1463d0c1c81c3bd41ef13cf832" target="_blank" rel="noopener noreferrer">ded5b692472629154ab5a2f63bd7cdd4deea3146 ↗</a><button type="button" class="copy" data-copy="ded5b692472629154ab5a2f63bd7cdd4deea3146" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/shell-completion.md" open data-path="docs/shell-completion.md">
+<summary class="file-head"><span class="path">docs/shell-completion.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-96bb44fbf0dbb1def5cffc4fff02321c350ed620366a5112f510155947e58146" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/shell-completion.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Update examples in docs, adds version update admonitions
+
+Refs: https://github.com/pallets/click/pull/3371#pullrequestreview-4173325028</pre><div class="meta"><span class="date" title="Author date">2026-04-27T16:37:02+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/ded5b692472629154ab5a2f63bd7cdd4deea3146#diff-96bb44fbf0dbb1def5cffc4fff02321c350ed620366a5112f510155947e58146" target="_blank" rel="noopener noreferrer">ded5b692472629154ab5a2f63bd7cdd4deea3146 ↗</a><button type="button" class="copy" data-copy="ded5b692472629154ab5a2f63bd7cdd4deea3146" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/support-multiple-versions.md" open data-path="docs/support-multiple-versions.md">
+<summary class="file-head"><span class="path">docs/support-multiple-versions.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-0674844abd46736654f37fec2a1bb04aecfba356beb0d6df97af41a03848ee75" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/support-multiple-versions.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Update examples in docs, adds version update admonitions
+
+Refs: https://github.com/pallets/click/pull/3371#pullrequestreview-4173325028</pre><div class="meta"><span class="date" title="Author date">2026-04-27T16:37:02+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/ded5b692472629154ab5a2f63bd7cdd4deea3146#diff-0674844abd46736654f37fec2a1bb04aecfba356beb0d6df97af41a03848ee75" target="_blank" rel="noopener noreferrer">ded5b692472629154ab5a2f63bd7cdd4deea3146 ↗</a><button type="button" class="copy" data-copy="ded5b692472629154ab5a2f63bd7cdd4deea3146" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/testing.md" open data-path="docs/testing.md">
+<summary class="file-head"><span class="path">docs/testing.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-c22885d97fa21ad974a3f5f982d92b6f45edc251fd34bc14223492ebd7391245" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/testing.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add `capture` parameter to `CliRunner` and revert default-mode `fileno` exposure
+
+Closes: #3384
+Refs: #3244</pre><div class="meta"><span class="date" title="Author date">2026-03-05T10:07:38+04:00</span><a class="hash" href="https://github.com/pallets/click/commit/ad39d749be85af02bf191636062eef51323ad5ab#diff-c22885d97fa21ad974a3f5f982d92b6f45edc251fd34bc14223492ebd7391245" target="_blank" rel="noopener noreferrer">ad39d749be85af02bf191636062eef51323ad5ab ↗</a><button type="button" class="copy" data-copy="ad39d749be85af02bf191636062eef51323ad5ab" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/docs/utils.md" open data-path="docs/utils.md">
+<summary class="file-head"><span class="path">docs/utils.md</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-1260bd93e2201ac083d0bd77c5f9f8f484b5f0773092ffdaa6dc8f9b71277f7b" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/docs/utils.md" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-1260bd93e2201ac083d0bd77c5f9f8f484b5f0773092ffdaa6dc8f9b71277f7b" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/examples/aliases/aliases.py" open data-path="examples/aliases/aliases.py">
+<summary class="file-head"><span class="path">examples/aliases/aliases.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-816e397b18ec83a0bd37d0687b092cc1b77f29a59fb84704c9b076ad834694d6" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/examples/aliases/aliases.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-816e397b18ec83a0bd37d0687b092cc1b77f29a59fb84704c9b076ad834694d6" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/examples/repo/repo.py" open data-path="examples/repo/repo.py">
+<summary class="file-head"><span class="path">examples/repo/repo.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-7cd2c67d3baee9f63706e9597daca3c8c91895343aca7cbbcc17a54722d103a6" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/examples/repo/repo.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-7cd2c67d3baee9f63706e9597daca3c8c91895343aca7cbbcc17a54722d103a6" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/examples/validation/validation.py" open data-path="examples/validation/validation.py">
+<summary class="file-head"><span class="path">examples/validation/validation.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-35ff7272a05c5eaa186bf76fc07c1242f6499b89df590c8b7df333113d6f6d74" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/examples/validation/validation.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Update examples in docs, adds version update admonitions
+
+Refs: https://github.com/pallets/click/pull/3371#pullrequestreview-4173325028</pre><div class="meta"><span class="date" title="Author date">2026-04-27T16:37:02+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/ded5b692472629154ab5a2f63bd7cdd4deea3146#diff-35ff7272a05c5eaa186bf76fc07c1242f6499b89df590c8b7df333113d6f6d74" target="_blank" rel="noopener noreferrer">ded5b692472629154ab5a2f63bd7cdd4deea3146 ↗</a><button type="button" class="copy" data-copy="ded5b692472629154ab5a2f63bd7cdd4deea3146" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/pyproject.toml" open data-path="pyproject.toml">
+<summary class="file-head"><span class="path">pyproject.toml</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/pyproject.toml" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Release 8.4.0</pre><div class="meta"><span class="date" title="Author date">2026-05-16T09:46:26-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/41f410fb7528305d7e87c8cfa704f6c2456f57fc#diff-50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711" target="_blank" rel="noopener noreferrer">41f410fb7528305d7e87c8cfa704f6c2456f57fc ↗</a><button type="button" class="copy" data-copy="41f410fb7528305d7e87c8cfa704f6c2456f57fc" title="Copy commit id">Copy</button><span class="user"><span class="an">Edward Girling</span> <span class="ae">&lt;egirling@wallstreet.io&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/__init__.py" open data-path="src/click/__init__.py">
+<summary class="file-head"><span class="path">src/click/__init__.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-768bcdbbdaa3001d4905761c3eed38d5ce6a62b9127df80de90d9ca4e806cacc" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/__init__.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-768bcdbbdaa3001d4905761c3eed38d5ce6a62b9127df80de90d9ca4e806cacc" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-768bcdbbdaa3001d4905761c3eed38d5ce6a62b9127df80de90d9ca4e806cacc" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/_compat.py" open data-path="src/click/_compat.py">
+<summary class="file-head"><span class="path">src/click/_compat.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-46505dbb054df22f8aa1fc5113faee7178f8ceaf4b6909a1d62cc528f381eb8d" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/_compat.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-46505dbb054df22f8aa1fc5113faee7178f8ceaf4b6909a1d62cc528f381eb8d" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/_termui_impl.py" open data-path="src/click/_termui_impl.py">
+<summary class="file-head"><span class="path">src/click/_termui_impl.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-f25fea0c0c214556563712a06f29270750a9b484a56d6a4df07ad5ae181b3eab" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/_termui_impl.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix documentation</pre><div class="meta"><span class="date" title="Author date">2026-05-11T14:11:22+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/dbdae170879d460e78963f8af35c5cb9c5b86e89#diff-f25fea0c0c214556563712a06f29270750a9b484a56d6a4df07ad5ae181b3eab" target="_blank" rel="noopener noreferrer">dbdae170879d460e78963f8af35c5cb9c5b86e89 ↗</a><button type="button" class="copy" data-copy="dbdae170879d460e78963f8af35c5cb9c5b86e89" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Redesigned tests and get_pager_file branching to be more clear and not set color
+unknowingly.</pre><div class="meta"><span class="date" title="Author date">2026-05-05T19:18:44+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/1aa2d53d63ff68bf14b35931177aac9270e39713#diff-f25fea0c0c214556563712a06f29270750a9b484a56d6a4df07ad5ae181b3eab" target="_blank" rel="noopener noreferrer">1aa2d53d63ff68bf14b35931177aac9270e39713 ↗</a><button type="button" class="copy" data-copy="1aa2d53d63ff68bf14b35931177aac9270e39713" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;andreas@backx.org&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-f25fea0c0c214556563712a06f29270750a9b484a56d6a4df07ad5ae181b3eab" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-f25fea0c0c214556563712a06f29270750a9b484a56d6a4df07ad5ae181b3eab" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">fix: `_termui_impl.open_url()` — &#x27;start&#x27; on Windows is a cmd built-in, not an executable (#3186)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:25:38+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/c5cced7b3096804567688df645194e3ed3dfa88b#diff-f25fea0c0c214556563712a06f29270750a9b484a56d6a4df07ad5ae181b3eab" target="_blank" rel="noopener noreferrer">c5cced7b3096804567688df645194e3ed3dfa88b ↗</a><button type="button" class="copy" data-copy="c5cced7b3096804567688df645194e3ed3dfa88b" title="Copy commit id">Copy</button><span class="user"><span class="an">Adam Karpierz</span> <span class="ae">&lt;karpierz@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/_textwrap.py" open data-path="src/click/_textwrap.py">
+<summary class="file-head"><span class="path">src/click/_textwrap.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-bf9eb1ba78c00865cf3450783b2da4e87d79056c1fb02fb8d3c5b5cb06a3acb0" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/_textwrap.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware</pre><div class="meta"><span class="date" title="Author date">2026-05-12T17:00:35+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/d946074a8fd4bd743dcde12e08e1561f062a2a68#diff-bf9eb1ba78c00865cf3450783b2da4e87d79056c1fb02fb8d3c5b5cb06a3acb0" target="_blank" rel="noopener noreferrer">d946074a8fd4bd743dcde12e08e1561f062a2a68 ↗</a><button type="button" class="copy" data-copy="d946074a8fd4bd743dcde12e08e1561f062a2a68" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/_utils.py" open data-path="src/click/_utils.py">
+<summary class="file-head"><span class="path">src/click/_utils.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-fcbf0152e9111a75ac5b3e8e7508a6b886335273ad511bb566e22380dfa33df9" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/_utils.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix sentinel typing and its uses in parser (#3396)</pre><div class="meta"><span class="date" title="Author date">2026-05-04T21:03:00+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/73e155006526575548d143ef519995f540547e52#diff-fcbf0152e9111a75ac5b3e8e7508a6b886335273ad511bb566e22380dfa33df9" target="_blank" rel="noopener noreferrer">73e155006526575548d143ef519995f540547e52 ↗</a><button type="button" class="copy" data-copy="73e155006526575548d143ef519995f540547e52" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/_winconsole.py" open data-path="src/click/_winconsole.py">
+<summary class="file-head"><span class="path">src/click/_winconsole.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-3bd2075eb8cab59a601f5a021078e5763eea117ae315b04d8d2d719de1f45a97" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/_winconsole.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-3bd2075eb8cab59a601f5a021078e5763eea117ae315b04d8d2d719de1f45a97" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/core.py" open data-path="src/click/core.py">
+<summary class="file-head"><span class="path">src/click/core.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/core.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Deduplicate deprecated label translation
+
+Refs #3423</pre><div class="meta"><span class="date" title="Author date">2026-05-15T13:09:15+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/c040135a74180d65c97c66614f234ea89c337ceb#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">c040135a74180d65c97c66614f234ea89c337ceb ↗</a><button type="button" class="copy" data-copy="c040135a74180d65c97c66614f234ea89c337ceb" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add missing space between option help text and deprecation label (#3423)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T12:41:22+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0039359443e73ab1034c63a1f6d58aba22c0ebc8#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">0039359443e73ab1034c63a1f6d58aba22c0ebc8 ↗</a><button type="button" class="copy" data-copy="0039359443e73ab1034c63a1f6d58aba22c0ebc8" title="Copy commit id">Copy</button><span class="user"><span class="an">Sylvain Joubert</span> <span class="ae">&lt;joubert.sy@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix dual-option arbitration to respect explicit defaults
+
+Closes #3403</pre><div class="meta"><span class="date" title="Author date">2026-05-15T11:55:32+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0f71fe771ceefd5715b3b375c9b2e3a701c0648e#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">0f71fe771ceefd5715b3b375c9b2e3a701c0648e ↗</a><button type="button" class="copy" data-copy="0f71fe771ceefd5715b3b375c9b2e3a701c0648e" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix sentinel typing and its uses in parser (#3396)</pre><div class="meta"><span class="date" title="Author date">2026-05-04T21:03:00+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/73e155006526575548d143ef519995f540547e52#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">73e155006526575548d143ef519995f540547e52 ↗</a><button type="button" class="copy" data-copy="73e155006526575548d143ef519995f540547e52" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`Parameter` typing improvements (#2805)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T00:11:47+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/ddede2147c9370ab8275f81db4826b6895d2e7dc#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">ddede2147c9370ab8275f81db4826b6895d2e7dc ↗</a><button type="button" class="copy" data-copy="ddede2147c9370ab8275f81db4826b6895d2e7dc" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Split string values from `default_map` for multi-value parameters
+
+Fixes #2745</pre><div class="meta"><span class="date" title="Author date">2026-04-21T16:58:25+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/3a3e0350b6a2ea3e799440d48e779acabcf44de9#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">3a3e0350b6a2ea3e799440d48e779acabcf44de9 ↗</a><button type="button" class="copy" data-copy="3a3e0350b6a2ea3e799440d48e779acabcf44de9" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">ParamType typing improvements
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-22T18:46:54+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/5989375dc3953a5709c411e11f658c242319858e#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">5989375dc3953a5709c411e11f658c242319858e ↗</a><button type="button" class="copy" data-copy="5989375dc3953a5709c411e11f658c242319858e" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Auto-detect `type=UNPROCESSED` when `flag_value` has non-basic types
+
+Closes #2012</pre><div class="meta"><span class="date" title="Author date">2026-04-21T12:55:57+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b#diff-11ba83cac151f7b24a1ed7c31a2a522d24d190cfa43199aa478d1e9cd2e6c610" target="_blank" rel="noopener noreferrer">4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b ↗</a><button type="button" class="copy" data-copy="4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/decorators.py" open data-path="src/click/decorators.py">
+<summary class="file-head"><span class="path">src/click/decorators.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-aea40b1b3cf30b37d2d86c6afa4c33080b1de745a83316fc8b489d104643b7b5" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/decorators.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-aea40b1b3cf30b37d2d86c6afa4c33080b1de745a83316fc8b489d104643b7b5" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/exceptions.py" open data-path="src/click/exceptions.py">
+<summary class="file-head"><span class="path">src/click/exceptions.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-9fd84e388c5f368ffa9ab1e619a701f685a8a8f68fd16d22393b42c053b7de77" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/exceptions.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-9fd84e388c5f368ffa9ab1e619a701f685a8a8f68fd16d22393b42c053b7de77" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`Parameter` typing improvements (#2805)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T00:11:47+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/ddede2147c9370ab8275f81db4826b6895d2e7dc#diff-9fd84e388c5f368ffa9ab1e619a701f685a8a8f68fd16d22393b42c053b7de77" target="_blank" rel="noopener noreferrer">ddede2147c9370ab8275f81db4826b6895d2e7dc ↗</a><button type="button" class="copy" data-copy="ddede2147c9370ab8275f81db4826b6895d2e7dc" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Use non-shadowed help option name in error hint
+
+Fix #2790.
+
+Co-authored-by: Mr-Neutr0n &lt;64578610+Mr-Neutr0n@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-21T17:56:16+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/1241abaed4e441582a21f4bf90c8482de02b92df#diff-9fd84e388c5f368ffa9ab1e619a701f685a8a8f68fd16d22393b42c053b7de77" target="_blank" rel="noopener noreferrer">1241abaed4e441582a21f4bf90c8482de02b92df ↗</a><button type="button" class="copy" data-copy="1241abaed4e441582a21f4bf90c8482de02b92df" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/formatting.py" open data-path="src/click/formatting.py">
+<summary class="file-head"><span class="path">src/click/formatting.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-04939e6dd0be258a7e7aa44b3c3375550015454bcd3d91a2edc088a6ea86266c" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/formatting.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix `HelpFormatter.write_usage` producing spurious characters
+
+Closes #3360</pre><div class="meta"><span class="date" title="Author date">2026-05-16T08:19:58+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0551bf53588ae87f462d336f24f853a156fefe3a#diff-04939e6dd0be258a7e7aa44b3c3375550015454bcd3d91a2edc088a6ea86266c" target="_blank" rel="noopener noreferrer">0551bf53588ae87f462d336f24f853a156fefe3a ↗</a><button type="button" class="copy" data-copy="0551bf53588ae87f462d336f24f853a156fefe3a" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware</pre><div class="meta"><span class="date" title="Author date">2026-05-12T17:00:35+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/d946074a8fd4bd743dcde12e08e1561f062a2a68#diff-04939e6dd0be258a7e7aa44b3c3375550015454bcd3d91a2edc088a6ea86266c" target="_blank" rel="noopener noreferrer">d946074a8fd4bd743dcde12e08e1561f062a2a68 ↗</a><button type="button" class="copy" data-copy="d946074a8fd4bd743dcde12e08e1561f062a2a68" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-04939e6dd0be258a7e7aa44b3c3375550015454bcd3d91a2edc088a6ea86266c" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/parser.py" open data-path="src/click/parser.py">
+<summary class="file-head"><span class="path">src/click/parser.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-948f9e0cc733616a6b18aa152ac6703e819fec61dd752d1efa40e5736c3bdce7" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/parser.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-948f9e0cc733616a6b18aa152ac6703e819fec61dd752d1efa40e5736c3bdce7" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix sentinel typing and its uses in parser (#3396)</pre><div class="meta"><span class="date" title="Author date">2026-05-04T21:03:00+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/73e155006526575548d143ef519995f540547e52#diff-948f9e0cc733616a6b18aa152ac6703e819fec61dd752d1efa40e5736c3bdce7" target="_blank" rel="noopener noreferrer">73e155006526575548d143ef519995f540547e52 ↗</a><button type="button" class="copy" data-copy="73e155006526575548d143ef519995f540547e52" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-948f9e0cc733616a6b18aa152ac6703e819fec61dd752d1efa40e5736c3bdce7" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-948f9e0cc733616a6b18aa152ac6703e819fec61dd752d1efa40e5736c3bdce7" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/shell_completion.py" open data-path="src/click/shell_completion.py">
+<summary class="file-head"><span class="path">src/click/shell_completion.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-076151bca96783a6553f19f519de6b1a4bd8f9675a41353728ef70a4255eec40" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/shell_completion.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Cleanup #3126
+
+Link to PR in changelog, move implementation details to Python code, fix changed version and align `.gitignore` syntax</pre><div class="meta"><span class="date" title="Author date">2026-04-30T08:15:34+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/2fdde68324c386bd967b00ce422daa357432f7cd#diff-076151bca96783a6553f19f519de6b1a4bd8f9675a41353728ef70a4255eec40" target="_blank" rel="noopener noreferrer">2fdde68324c386bd967b00ce422daa357432f7cd ↗</a><button type="button" class="copy" data-copy="2fdde68324c386bd967b00ce422daa357432f7cd" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix: Ensure fish completion handles multiline help strings correctly (#3126)</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:37:31+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/19fd4d6e18bc9fce451f92f422696b11169faa57#diff-076151bca96783a6553f19f519de6b1a4bd8f9675a41353728ef70a4255eec40" target="_blank" rel="noopener noreferrer">19fd4d6e18bc9fce451f92f422696b11169faa57 ↗</a><button type="button" class="copy" data-copy="19fd4d6e18bc9fce451f92f422696b11169faa57" title="Copy commit id">Copy</button><span class="user"><span class="an">ReneS</span> <span class="ae">&lt;148054878+ReneSoltes@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`Parameter` typing improvements (#2805)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T00:11:47+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/ddede2147c9370ab8275f81db4826b6895d2e7dc#diff-076151bca96783a6553f19f519de6b1a4bd8f9675a41353728ef70a4255eec40" target="_blank" rel="noopener noreferrer">ddede2147c9370ab8275f81db4826b6895d2e7dc ↗</a><button type="button" class="copy" data-copy="ddede2147c9370ab8275f81db4826b6895d2e7dc" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/termui.py" open data-path="src/click/termui.py">
+<summary class="file-head"><span class="path">src/click/termui.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/termui.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Implement a regex-based solution to hide hidden input</pre><div class="meta"><span class="date" title="Author date">2026-05-08T16:39:06+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/61bdc2ae81f6d0dc19bd247504544659245df056#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">61bdc2ae81f6d0dc19bd247504544659245df056 ↗</a><button type="button" class="copy" data-copy="61bdc2ae81f6d0dc19bd247504544659245df056" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">fix: show custom error message in prompt with hide_input=True</pre><div class="meta"><span class="date" title="Author date">2026-03-11T01:28:21+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/a09c1c655eef3d43181eb46036b66cf058d72df4#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">a09c1c655eef3d43181eb46036b66cf058d72df4 ↗</a><button type="button" class="copy" data-copy="a09c1c655eef3d43181eb46036b66cf058d72df4" title="Copy commit id">Copy</button><span class="user"><span class="an">doiken</span> <span class="ae">&lt;doiken@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add file-like pager: `click.get_pager_file()` (#1572)
+
+Co-authored-by: pre-commit-ci-lite[bot] &lt;117423508+pre-commit-ci-lite[bot]@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T11:33:43+12:00</span><a class="hash" href="https://github.com/pallets/click/commit/c69643b60cf971cd5d8e5d3902632807ceab9b8f#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">c69643b60cf971cd5d8e5d3902632807ceab9b8f ↗</a><button type="button" class="copy" data-copy="c69643b60cf971cd5d8e5d3902632807ceab9b8f" title="Copy commit id">Copy</button><span class="user"><span class="an">Craig de Stigter</span> <span class="ae">&lt;craig@destigter.nz&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix readline backspace/line-wrapping on linux (#2969)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-29T16:20:22-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/2468b70997a6ec27ced4b4867954c90da3f92075#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">2468b70997a6ec27ced4b4867954c90da3f92075 ↗</a><button type="button" class="copy" data-copy="2468b70997a6ec27ced4b4867954c90da3f92075" title="Copy commit id">Copy</button><span class="user"><span class="an">Yorick</span> <span class="ae">&lt;yorickvanpelt@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">ParamType typing improvements
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-22T18:46:54+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/5989375dc3953a5709c411e11f658c242319858e#diff-1f88635ce1d1f86bb7f9de29ef053bf8fc628a13530d1d2c6a69d0ad637e32cd" target="_blank" rel="noopener noreferrer">5989375dc3953a5709c411e11f658c242319858e ↗</a><button type="button" class="copy" data-copy="5989375dc3953a5709c411e11f658c242319858e" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/testing.py" open data-path="src/click/testing.py">
+<summary class="file-head"><span class="path">src/click/testing.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-b07fd6fad9f9ea8be5cbcbeaf34c956703b929b2de95c56229e77c328a7c6010" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/testing.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add `capture` parameter to `CliRunner` and revert default-mode `fileno` exposure
+
+Closes: #3384
+Refs: #3244</pre><div class="meta"><span class="date" title="Author date">2026-03-05T10:07:38+04:00</span><a class="hash" href="https://github.com/pallets/click/commit/ad39d749be85af02bf191636062eef51323ad5ab#diff-b07fd6fad9f9ea8be5cbcbeaf34c956703b929b2de95c56229e77c328a7c6010" target="_blank" rel="noopener noreferrer">ad39d749be85af02bf191636062eef51323ad5ab ↗</a><button type="button" class="copy" data-copy="ad39d749be85af02bf191636062eef51323ad5ab" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/types.py" open data-path="src/click/types.py">
+<summary class="file-head"><span class="path">src/click/types.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/types.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`FuncParamType` should use `ValueError` message in `self.fail()` (#3211)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T16:47:47+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1 ↗</a><button type="button" class="copy" data-copy="fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1" title="Copy commit id">Copy</button><span class="user"><span class="an">STEPHEN OTIENO ONYANGO</span> <span class="ae">&lt;142543761+StevOti@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Extract `_guess_type` from `convert_type` and add overloads (#3372)
+
+Co-authored-by: Andreas Backx &lt;AndreasBackx@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:10:44+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/d2e4a42ff410d92e88293f3552422a4a284c749b#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">d2e4a42ff410d92e88293f3552422a4a284c749b ↗</a><button type="button" class="copy" data-copy="d2e4a42ff410d92e88293f3552422a4a284c749b" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kdeldycke@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Make `FuncParamType` is generic
+
+Refs: https://github.com/pallets/click/pull/3371#discussion_r3140255513</pre><div class="meta"><span class="date" title="Author date">2026-04-27T16:19:20+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/78a4efcdce1067566fa58771afbaeb18e2c1cf0f#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">78a4efcdce1067566fa58771afbaeb18e2c1cf0f ↗</a><button type="button" class="copy" data-copy="78a4efcdce1067566fa58771afbaeb18e2c1cf0f" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Eliminate one type ignore
+
+Refs https://github.com/pallets/click/pull/3371#discussion_r3140243932</pre><div class="meta"><span class="date" title="Author date">2026-04-27T15:55:48+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/3e2d92c590c34c92e116acdda71e7678ca50895e#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">3e2d92c590c34c92e116acdda71e7678ca50895e ↗</a><button type="button" class="copy" data-copy="3e2d92c590c34c92e116acdda71e7678ca50895e" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Narrow down type ignore
+
+Refs: https://github.com/pallets/click/pull/3371#discussion_r3140274565
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-27T15:35:47+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/6e981edefaeafa6c16b478dc131fba4d936024f1#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">6e981edefaeafa6c16b478dc131fba4d936024f1 ↗</a><button type="button" class="copy" data-copy="6e981edefaeafa6c16b478dc131fba4d936024f1" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">ParamType typing improvements
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-22T18:46:54+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/5989375dc3953a5709c411e11f658c242319858e#diff-dcb534e6a7591b92836537d4655ddbd2f18e3b293c3420144c30a9ca08f65c4e" target="_blank" rel="noopener noreferrer">5989375dc3953a5709c411e11f658c242319858e ↗</a><button type="button" class="copy" data-copy="5989375dc3953a5709c411e11f658c242319858e" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/src/click/utils.py" open data-path="src/click/utils.py">
+<summary class="file-head"><span class="path">src/click/utils.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-0140337741a334b642a5170e3bd7c408eea4bb4394df9226cd033fae8f5c0a19" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/src/click/utils.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Apply class-body annotations to `KeepOpenFile` for consistency</pre><div class="meta"><span class="date" title="Author date">2026-05-16T07:46:07+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/fc41aa1d0b62494eb93e92ff3929601221e3abf4#diff-0140337741a334b642a5170e3bd7c408eea4bb4394df9226cd033fae8f5c0a19" target="_blank" rel="noopener noreferrer">fc41aa1d0b62494eb93e92ff3929601221e3abf4 ↗</a><button type="button" class="copy" data-copy="fc41aa1d0b62494eb93e92ff3929601221e3abf4" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add type annotations for instance attributes in `utils`</pre><div class="meta"><span class="date" title="Author date">2026-05-12T22:07:16+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/279ce7b01666a57e61e94514b39312c02a3184d2#diff-0140337741a334b642a5170e3bd7c408eea4bb4394df9226cd033fae8f5c0a19" target="_blank" rel="noopener noreferrer">279ce7b01666a57e61e94514b39312c02a3184d2 ↗</a><button type="button" class="copy" data-copy="279ce7b01666a57e61e94514b39312c02a3184d2" title="Copy commit id">Copy</button><span class="user"><span class="an">jorenham</span> <span class="ae">&lt;jhammudoglu@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Localisation of more strings (#2902)
+
+Co-authored-by: Carmen Bianca BAKKER &lt;carmen@carmenbianca.eu&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T13:42:08+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/5b9630f50fde938b72ad8c99542efe3a6f5717e2#diff-0140337741a334b642a5170e3bd7c408eea4bb4394df9226cd033fae8f5c0a19" target="_blank" rel="noopener noreferrer">5b9630f50fde938b72ad8c99542efe3a6f5717e2 ↗</a><button type="button" class="copy" data-copy="5b9630f50fde938b72ad8c99542efe3a6f5717e2" title="Copy commit id">Copy</button><span class="user"><span class="an">Eric Platon</span> <span class="ae">&lt;__ic@tutamail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_commands.py" open data-path="tests/test_commands.py">
+<summary class="file-head"><span class="path">tests/test_commands.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-5592e672cef095f585fc0083c44cdfb8aafdfc11904a484dfa2b0794b0079f35" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_commands.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-5592e672cef095f585fc0083c44cdfb8aafdfc11904a484dfa2b0794b0079f35" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_compat.py" open data-path="tests/test_compat.py">
+<summary class="file-head"><span class="path">tests/test_compat.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-c3ed0e31e83ef51f2ed830f1440eb56532564ca92799c280165b008f97a05a56" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_compat.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add parametrized tests for `should_strip_ansi`
+
+Copy of the original code from #2731, but without the part that has been addressed upstream by #2607 for 8.2.0 release.
+
+Co-authored-by: Tyler Lendon &lt;trl75@pitt.edu&gt;
+Co-authored-by: David Lord &lt;davidism@gmail.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-21T16:17:51+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/cf0c36d33734af1de9ecd5d3305970eb26ebba7f#diff-c3ed0e31e83ef51f2ed830f1440eb56532564ca92799c280165b008f97a05a56" target="_blank" rel="noopener noreferrer">cf0c36d33734af1de9ecd5d3305970eb26ebba7f ↗</a><button type="button" class="copy" data-copy="cf0c36d33734af1de9ecd5d3305970eb26ebba7f" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_defaults.py" open data-path="tests/test_defaults.py">
+<summary class="file-head"><span class="path">tests/test_defaults.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-2039797cb9020a61ac2f4522d9140e4a5d90bcf8b7e163a48f964c3fc4520a16" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_defaults.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Split string values from `default_map` for multi-value parameters
+
+Fixes #2745</pre><div class="meta"><span class="date" title="Author date">2026-04-21T16:58:25+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/3a3e0350b6a2ea3e799440d48e779acabcf44de9#diff-2039797cb9020a61ac2f4522d9140e4a5d90bcf8b7e163a48f964c3fc4520a16" target="_blank" rel="noopener noreferrer">3a3e0350b6a2ea3e799440d48e779acabcf44de9 ↗</a><button type="button" class="copy" data-copy="3a3e0350b6a2ea3e799440d48e779acabcf44de9" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-2039797cb9020a61ac2f4522d9140e4a5d90bcf8b7e163a48f964c3fc4520a16" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_formatting.py" open data-path="tests/test_formatting.py">
+<summary class="file-head"><span class="path">tests/test_formatting.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-77e357ea1ebd625dbc52532a43f82e67a856e499d3d0b1427b57a71c6f85056a" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_formatting.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix `HelpFormatter.write_usage` producing spurious characters
+
+Closes #3360</pre><div class="meta"><span class="date" title="Author date">2026-05-16T08:19:58+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0551bf53588ae87f462d336f24f853a156fefe3a#diff-77e357ea1ebd625dbc52532a43f82e67a856e499d3d0b1427b57a71c6f85056a" target="_blank" rel="noopener noreferrer">0551bf53588ae87f462d336f24f853a156fefe3a ↗</a><button type="button" class="copy" data-copy="0551bf53588ae87f462d336f24f853a156fefe3a" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware</pre><div class="meta"><span class="date" title="Author date">2026-05-12T17:00:35+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/d946074a8fd4bd743dcde12e08e1561f062a2a68#diff-77e357ea1ebd625dbc52532a43f82e67a856e499d3d0b1427b57a71c6f85056a" target="_blank" rel="noopener noreferrer">d946074a8fd4bd743dcde12e08e1561f062a2a68 ↗</a><button type="button" class="copy" data-copy="d946074a8fd4bd743dcde12e08e1561f062a2a68" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Use non-shadowed help option name in error hint
+
+Fix #2790.
+
+Co-authored-by: Mr-Neutr0n &lt;64578610+Mr-Neutr0n@users.noreply.github.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-21T17:56:16+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/1241abaed4e441582a21f4bf90c8482de02b92df#diff-77e357ea1ebd625dbc52532a43f82e67a856e499d3d0b1427b57a71c6f85056a" target="_blank" rel="noopener noreferrer">1241abaed4e441582a21f4bf90c8482de02b92df ↗</a><button type="button" class="copy" data-copy="1241abaed4e441582a21f4bf90c8482de02b92df" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_imports.py" open data-path="tests/test_imports.py">
+<summary class="file-head"><span class="path">tests/test_imports.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-4d9a34b7ad122a810d55b552b8ce2854e693d44ae06c2724b5cb85b4635b0d7f" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_imports.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">ParamType typing improvements
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-22T18:46:54+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/5989375dc3953a5709c411e11f658c242319858e#diff-4d9a34b7ad122a810d55b552b8ce2854e693d44ae06c2724b5cb85b4635b0d7f" target="_blank" rel="noopener noreferrer">5989375dc3953a5709c411e11f658c242319858e ↗</a><button type="button" class="copy" data-copy="5989375dc3953a5709c411e11f658c242319858e" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;AndreasBackx@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_options.py" open data-path="tests/test_options.py">
+<summary class="file-head"><span class="path">tests/test_options.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-1d9e1495e2f95c2cd4ffb71e449bb5a460dd96297c5e1a7bfe428feee6fc0507" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_options.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix dual-option arbitration to respect explicit defaults
+
+Closes #3403</pre><div class="meta"><span class="date" title="Author date">2026-05-15T11:55:32+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/0f71fe771ceefd5715b3b375c9b2e3a701c0648e#diff-1d9e1495e2f95c2cd4ffb71e449bb5a460dd96297c5e1a7bfe428feee6fc0507" target="_blank" rel="noopener noreferrer">0f71fe771ceefd5715b3b375c9b2e3a701c0648e ↗</a><button type="button" class="copy" data-copy="0f71fe771ceefd5715b3b375c9b2e3a701c0648e" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add NoSuchCommand exception with suggestions for misspelled commands (#3228)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-30T02:53:14+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/831c8f0948af519e45b90801d7430ff25451f972#diff-1d9e1495e2f95c2cd4ffb71e449bb5a460dd96297c5e1a7bfe428feee6fc0507" target="_blank" rel="noopener noreferrer">831c8f0948af519e45b90801d7430ff25451f972 ↗</a><button type="button" class="copy" data-copy="831c8f0948af519e45b90801d7430ff25451f972" title="Copy commit id">Copy</button><span class="user"><span class="an">RC2215</span> <span class="ae">&lt;88962047+RC2215@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-1d9e1495e2f95c2cd4ffb71e449bb5a460dd96297c5e1a7bfe428feee6fc0507" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Auto-detect `type=UNPROCESSED` when `flag_value` has non-basic types
+
+Closes #2012</pre><div class="meta"><span class="date" title="Author date">2026-04-21T12:55:57+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b#diff-1d9e1495e2f95c2cd4ffb71e449bb5a460dd96297c5e1a7bfe428feee6fc0507" target="_blank" rel="noopener noreferrer">4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b ↗</a><button type="button" class="copy" data-copy="4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_shell_completion.py" open data-path="tests/test_shell_completion.py">
+<summary class="file-head"><span class="path">tests/test_shell_completion.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-bb232e2a97a06edb6c28d197ace33a68e3f60cc42466ebcac0421a41560b4739" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_shell_completion.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix: Ensure fish completion handles multiline help strings correctly (#3126)</pre><div class="meta"><span class="date" title="Author date">2026-04-30T01:37:31+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/19fd4d6e18bc9fce451f92f422696b11169faa57#diff-bb232e2a97a06edb6c28d197ace33a68e3f60cc42466ebcac0421a41560b4739" target="_blank" rel="noopener noreferrer">19fd4d6e18bc9fce451f92f422696b11169faa57 ↗</a><button type="button" class="copy" data-copy="19fd4d6e18bc9fce451f92f422696b11169faa57" title="Copy commit id">Copy</button><span class="user"><span class="an">ReneS</span> <span class="ae">&lt;148054878+ReneSoltes@users.noreply.github.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_termui.py" open data-path="tests/test_termui.py">
+<summary class="file-head"><span class="path">tests/test_termui.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_termui.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Skip some tests on Windows</pre><div class="meta"><span class="date" title="Author date">2026-05-11T14:20:56+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/b761eda3bad977ec2f485451d85fd8ec365f0bf4#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">b761eda3bad977ec2f485451d85fd8ec365f0bf4 ↗</a><button type="button" class="copy" data-copy="b761eda3bad977ec2f485451d85fd8ec365f0bf4" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Check `PAGER` usage, color preservation and edge-cases</pre><div class="meta"><span class="date" title="Author date">2026-05-11T14:20:39+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/98302ac4f49e443a48abd3fbb95c86202b89547d#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">98302ac4f49e443a48abd3fbb95c86202b89547d ↗</a><button type="button" class="copy" data-copy="98302ac4f49e443a48abd3fbb95c86202b89547d" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Redesigned tests and get_pager_file branching to be more clear and not set color
+unknowingly.</pre><div class="meta"><span class="date" title="Author date">2026-05-05T19:18:44+01:00</span><a class="hash" href="https://github.com/pallets/click/commit/1aa2d53d63ff68bf14b35931177aac9270e39713#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">1aa2d53d63ff68bf14b35931177aac9270e39713 ↗</a><button type="button" class="copy" data-copy="1aa2d53d63ff68bf14b35931177aac9270e39713" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;andreas@backx.org&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add some unit tests and integration tests for get_pager_file.</pre><div class="meta"><span class="date" title="Author date">2026-05-04T21:05:41+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/e94e8dc40da6fc3975fe4931ecd8ecbac87f7cc9#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">e94e8dc40da6fc3975fe4931ecd8ecbac87f7cc9 ↗</a><button type="button" class="copy" data-copy="e94e8dc40da6fc3975fe4931ecd8ecbac87f7cc9" title="Copy commit id">Copy</button><span class="user"><span class="an">Andreas Backx</span> <span class="ae">&lt;andreas@backx.org&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Implement a regex-based solution to hide hidden input</pre><div class="meta"><span class="date" title="Author date">2026-05-08T16:39:06+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/61bdc2ae81f6d0dc19bd247504544659245df056#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">61bdc2ae81f6d0dc19bd247504544659245df056 ↗</a><button type="button" class="copy" data-copy="61bdc2ae81f6d0dc19bd247504544659245df056" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Demonstrate limits of substring matching</pre><div class="meta"><span class="date" title="Author date">2026-04-30T10:00:36+02:00</span><a class="hash" href="https://github.com/pallets/click/commit/efd4daf3e3d9a5455d8045a16b1c73a9ef331104#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">efd4daf3e3d9a5455d8045a16b1c73a9ef331104 ↗</a><button type="button" class="copy" data-copy="efd4daf3e3d9a5455d8045a16b1c73a9ef331104" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">fix: show custom error message in prompt with hide_input=True</pre><div class="meta"><span class="date" title="Author date">2026-03-11T01:28:21+09:00</span><a class="hash" href="https://github.com/pallets/click/commit/a09c1c655eef3d43181eb46036b66cf058d72df4#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">a09c1c655eef3d43181eb46036b66cf058d72df4 ↗</a><button type="button" class="copy" data-copy="a09c1c655eef3d43181eb46036b66cf058d72df4" title="Copy commit id">Copy</button><span class="user"><span class="an">doiken</span> <span class="ae">&lt;doiken@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-e9b43a3662176468b449eee04c777e29d67212bfc0dc0ca42a03b32d970b0dea" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_testing.py" open data-path="tests/test_testing.py">
+<summary class="file-head"><span class="path">tests/test_testing.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-4ef2e08b486eda689adedaf0ac32bd01a6b04f05557d3c5e16078f3abedad6b4" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_testing.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Add `capture` parameter to `CliRunner` and revert default-mode `fileno` exposure
+
+Closes: #3384
+Refs: #3244</pre><div class="meta"><span class="date" title="Author date">2026-03-05T10:07:38+04:00</span><a class="hash" href="https://github.com/pallets/click/commit/ad39d749be85af02bf191636062eef51323ad5ab#diff-4ef2e08b486eda689adedaf0ac32bd01a6b04f05557d3c5e16078f3abedad6b4" target="_blank" rel="noopener noreferrer">ad39d749be85af02bf191636062eef51323ad5ab ↗</a><button type="button" class="copy" data-copy="ad39d749be85af02bf191636062eef51323ad5ab" title="Copy commit id">Copy</button><span class="user"><span class="an">Kevin Deldycke</span> <span class="ae">&lt;kevin@deldycke.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_types.py" open data-path="tests/test_types.py">
+<summary class="file-head"><span class="path">tests/test_types.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-bd467a363c9f155a2e6a7716aeca0c351089135a53d09a66138cea4f16506ebd" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_types.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">`FuncParamType` should use `ValueError` message in `self.fail()` (#3211)
+
+Co-authored-by: Andreas Backx &lt;andreas@backx.org&gt;</pre><div class="meta"><span class="date" title="Author date">2026-05-08T16:47:47+03:00</span><a class="hash" href="https://github.com/pallets/click/commit/fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1#diff-bd467a363c9f155a2e6a7716aeca0c351089135a53d09a66138cea4f16506ebd" target="_blank" rel="noopener noreferrer">fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1 ↗</a><button type="button" class="copy" data-copy="fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1" title="Copy commit id">Copy</button><span class="user"><span class="an">STEPHEN OTIENO ONYANGO</span> <span class="ae">&lt;142543761+StevOti@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">add codespell pre-commit hook</pre><div class="meta"><span class="date" title="Author date">2026-04-21T20:56:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3c0898975a7e095a3f11fd2d13035872a55a3e5#diff-bd467a363c9f155a2e6a7716aeca0c351089135a53d09a66138cea4f16506ebd" target="_blank" rel="noopener noreferrer">e3c0898975a7e095a3f11fd2d13035872a55a3e5 ↗</a><button type="button" class="copy" data-copy="e3c0898975a7e095a3f11fd2d13035872a55a3e5" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/tests/test_utils.py" open data-path="tests/test_utils.py">
+<summary class="file-head"><span class="path">tests/test_utils.py</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-33c13e0b177bacd2f02e29bcb8aea5b49e7ce34901fd8f41fefb65defba1bd33" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/tests/test_utils.py" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Fix readline backspace/line-wrapping on linux (#2969)
+
+Co-authored-by: Kevin Deldycke &lt;kevin@deldycke.com&gt;</pre><div class="meta"><span class="date" title="Author date">2026-04-29T16:20:22-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/2468b70997a6ec27ced4b4867954c90da3f92075#diff-33c13e0b177bacd2f02e29bcb8aea5b49e7ce34901fd8f41fefb65defba1bd33" target="_blank" rel="noopener noreferrer">2468b70997a6ec27ced4b4867954c90da3f92075 ↗</a><button type="button" class="copy" data-copy="2468b70997a6ec27ced4b4867954c90da3f92075" title="Copy commit id">Copy</button><span class="user"><span class="an">Yorick</span> <span class="ae">&lt;yorickvanpelt@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file" id="file/click/uv.lock" open data-path="uv.lock">
+<summary class="file-head"><span class="path">uv.lock</span> <a class="compare" href="https://github.com/pallets/click/compare/hotfix%2FSG_19.17.1...release%2FSG_19.18.0#diff-84321598744d84dbee2318e634c74c9aae39a1c253f1c4bd17ebf9ef2f807b11" target="_blank" rel="noopener noreferrer">Compare ↗</a><a class="anchor" href="#file/click/uv.lock" title="Link to this file">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="M"><span class="badge b-M" title="Modified">M</span><span class="status-name">Modified</span><pre class="msg">Release 8.4.0</pre><div class="meta"><span class="date" title="Author date">2026-05-16T09:46:26-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/41f410fb7528305d7e87c8cfa704f6c2456f57fc#diff-84321598744d84dbee2318e634c74c9aae39a1c253f1c4bd17ebf9ef2f807b11" target="_blank" rel="noopener noreferrer">41f410fb7528305d7e87c8cfa704f6c2456f57fc ↗</a><button type="button" class="copy" data-copy="41f410fb7528305d7e87c8cfa704f6c2456f57fc" title="Copy commit id">Copy</button><span class="user"><span class="an">Edward Girling</span> <span class="ae">&lt;egirling@wallstreet.io&gt;</span></span></div></li>
+</ol>
+</details>
+<details class="file nofiles" id="nofiles/click" open data-path="">
+<summary class="file-head"><span class="path">Commits with no file changes</span><a class="anchor" href="#nofiles/click" title="Link to this section">#</a></summary>
+<ol class="entries">
+<li class="entry" data-status="none"><pre class="msg">Add type annotations for instance attributes in `utils` (#3422)</pre><div class="meta"><span class="date" title="Author date">2026-05-16T08:55:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/e3e69e3bf8d749ac1a632f2ece4d38ec7f6588f5" target="_blank" rel="noopener noreferrer">e3e69e3bf8d749ac1a632f2ece4d38ec7f6588f5 ↗</a><button type="button" class="copy" data-copy="e3e69e3bf8d749ac1a632f2ece4d38ec7f6588f5" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">WIP: Fix `HelpFormatter.write_usage` producing spurious characters (#3434)</pre><div class="meta"><span class="date" title="Author date">2026-05-16T08:53:39-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/3bb230dcd5d751f8605b46e9df5a541639d5fd4e" target="_blank" rel="noopener noreferrer">3bb230dcd5d751f8605b46e9df5a541639d5fd4e ↗</a><button type="button" class="copy" data-copy="3bb230dcd5d751f8605b46e9df5a541639d5fd4e" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">`click.get_pager_file`: add tests (#1572 followup) (#3405)</pre><div class="meta"><span class="date" title="Author date">2026-05-16T08:50:46-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/63274a79d08fdc5c19220696144489f7144a8547" target="_blank" rel="noopener noreferrer">63274a79d08fdc5c19220696144489f7144a8547 ↗</a><button type="button" class="copy" data-copy="63274a79d08fdc5c19220696144489f7144a8547" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Make `TextWrapper` ANSI-aware (#3420)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T22:04:29-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/7c99ebe23b931f27562d926814423cce85fd9766" target="_blank" rel="noopener noreferrer">7c99ebe23b931f27562d926814423cce85fd9766 ↗</a><button type="button" class="copy" data-copy="7c99ebe23b931f27562d926814423cce85fd9766" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into fix-wrap-text-ansi</pre><div class="meta"><span class="date" title="Author date">2026-05-15T22:03:38-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/587e3cc7f4804a4fa62f3dab8839a6e1f8954d7c" target="_blank" rel="noopener noreferrer">587e3cc7f4804a4fa62f3dab8839a6e1f8954d7c ↗</a><button type="button" class="copy" data-copy="587e3cc7f4804a4fa62f3dab8839a6e1f8954d7c" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Add capture mode to `CliRunner` and revert default `fileno` exposure (#3391)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:57:45-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/d959898db264aaf07e70ad4eafa254286f9a5185" target="_blank" rel="noopener noreferrer">d959898db264aaf07e70ad4eafa254286f9a5185 ↗</a><button type="button" class="copy" data-copy="d959898db264aaf07e70ad4eafa254286f9a5185" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into fix-3384-clirunner-fd-capture</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:56:54-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/d65315cfc3577a0e9f1f4e77f8c9cebb0e570164" target="_blank" rel="noopener noreferrer">d65315cfc3577a0e9f1f4e77f8c9cebb0e570164 ↗</a><button type="button" class="copy" data-copy="d65315cfc3577a0e9f1f4e77f8c9cebb0e570164" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Cleanup documentation for `8.4.0` (#3393)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:48:03-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/ba745ac64037b7d4cdd0abce10446c0a2861935f" target="_blank" rel="noopener noreferrer">ba745ac64037b7d4cdd0abce10446c0a2861935f ↗</a><button type="button" class="copy" data-copy="ba745ac64037b7d4cdd0abce10446c0a2861935f" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into changelog-3372</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:46:41-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/84a42d35822ab3aa6607212fc993f37dced5e9ac" target="_blank" rel="noopener noreferrer">84a42d35822ab3aa6607212fc993f37dced5e9ac ↗</a><button type="button" class="copy" data-copy="84a42d35822ab3aa6607212fc993f37dced5e9ac" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Dual-option value arbitration: `first` vs. `last` vs. `most explicit` policy (#3404)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:44:49-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/ec8226954e2657324e7a25fec6657e4fbde33bcb" target="_blank" rel="noopener noreferrer">ec8226954e2657324e7a25fec6657e4fbde33bcb ↗</a><button type="button" class="copy" data-copy="ec8226954e2657324e7a25fec6657e4fbde33bcb" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into dual-flags-competition</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:43:54-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/98cba78d0a567eca8f19620a5cb3bcad3f63dbe5" target="_blank" rel="noopener noreferrer">98cba78d0a567eca8f19620a5cb3bcad3f63dbe5 ↗</a><button type="button" class="copy" data-copy="98cba78d0a567eca8f19620a5cb3bcad3f63dbe5" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Deduplicate deprecated label translation (#3430)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:38:39-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/3619563d9bf8763360d3f0d95eb76e43f26dea5e" target="_blank" rel="noopener noreferrer">3619563d9bf8763360d3f0d95eb76e43f26dea5e ↗</a><button type="button" class="copy" data-copy="3619563d9bf8763360d3f0d95eb76e43f26dea5e" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into deduplicate-deprecated-message</pre><div class="meta"><span class="date" title="Author date">2026-05-15T21:36:29-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/843879880e94023317699ac2e85e5f7a44fb1b68" target="_blank" rel="noopener noreferrer">843879880e94023317699ac2e85e5f7a44fb1b68 ↗</a><button type="button" class="copy" data-copy="843879880e94023317699ac2e85e5f7a44fb1b68" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Document short option stacking behavior (#3431)</pre><div class="meta"><span class="date" title="Author date">2026-05-15T08:03:37-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/63daae27b124b717cffa8b458e1a0a43525f2b34" target="_blank" rel="noopener noreferrer">63daae27b124b717cffa8b458e1a0a43525f2b34 ↗</a><button type="button" class="copy" data-copy="63daae27b124b717cffa8b458e1a0a43525f2b34" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Show custom error message in prompt with `hide_input=True` (#3256)</pre><div class="meta"><span class="date" title="Author date">2026-05-13T22:01:09-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/c943271a269e6941fcc51e3506ead074b9dda6be" target="_blank" rel="noopener noreferrer">c943271a269e6941fcc51e3506ead074b9dda6be ↗</a><button type="button" class="copy" data-copy="c943271a269e6941fcc51e3506ead074b9dda6be" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Add parametrized tests for `should_strip_ansi` (#2731)</pre><div class="meta"><span class="date" title="Author date">2026-04-29T00:07:49-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/25edc1e31360efba4f64c8c3c540bbbcfb7876da" target="_blank" rel="noopener noreferrer">25edc1e31360efba4f64c8c3c540bbbcfb7876da ↗</a><button type="button" class="copy" data-copy="25edc1e31360efba4f64c8c3c540bbbcfb7876da" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">fix help hint showing shadowed option name (#3208)</pre><div class="meta"><span class="date" title="Author date">2026-04-29T00:01:41-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/0cd28d6548f92e46396e0ffdd19ec5ea75b4b5e4" target="_blank" rel="noopener noreferrer">0cd28d6548f92e46396e0ffdd19ec5ea75b4b5e4 ↗</a><button type="button" class="copy" data-copy="0cd28d6548f92e46396e0ffdd19ec5ea75b4b5e4" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into fix/help-option-shadowing-suggestion</pre><div class="meta"><span class="date" title="Author date">2026-04-29T00:00:18-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/2d0490b12ceebb5c68a6aa7a9a7bb2a7ad522e86" target="_blank" rel="noopener noreferrer">2d0490b12ceebb5c68a6aa7a9a7bb2a7ad522e86 ↗</a><button type="button" class="copy" data-copy="2d0490b12ceebb5c68a6aa7a9a7bb2a7ad522e86" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Fix bad merge in changes (#3390)</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:50:56-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/8d3449517a97b6fd457a025bd9c3d2acfd301fa4" target="_blank" rel="noopener noreferrer">8d3449517a97b6fd457a025bd9c3d2acfd301fa4 ↗</a><button type="button" class="copy" data-copy="8d3449517a97b6fd457a025bd9c3d2acfd301fa4" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Auto-detect `type=UNPROCESSED` when `flag_value` has non-basic types (#3363)</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:47:35-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/b03f211e602d915f413068eba87ff08469b38477" target="_blank" rel="noopener noreferrer">b03f211e602d915f413068eba87ff08469b38477 ↗</a><button type="button" class="copy" data-copy="b03f211e602d915f413068eba87ff08469b38477" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into flag-value-unprocessed-auto-detect</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:45:09-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/cf93868770f48556d2caa0a19c65e36302a71c6f" target="_blank" rel="noopener noreferrer">cf93868770f48556d2caa0a19c65e36302a71c6f ↗</a><button type="button" class="copy" data-copy="cf93868770f48556d2caa0a19c65e36302a71c6f" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Split string values from `default_map` for multi-value parameters (#3364)</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:41:18-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/c8da1fcc2cb4523c1fb5bef7f0ca82394dde1efd" target="_blank" rel="noopener noreferrer">c8da1fcc2cb4523c1fb5bef7f0ca82394dde1efd ↗</a><button type="button" class="copy" data-copy="c8da1fcc2cb4523c1fb5bef7f0ca82394dde1efd" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge branch &#x27;main&#x27; into fix-default-map-nargs</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:37:56-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/a014796098fe79d61f8a78bc9dfd888adfd19c01" target="_blank" rel="noopener noreferrer">a014796098fe79d61f8a78bc9dfd888adfd19c01 ↗</a><button type="button" class="copy" data-copy="a014796098fe79d61f8a78bc9dfd888adfd19c01" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">`ParamType` and other typing improvements (#3371)</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:31:25-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/8a2b48901a08b3d2ec3a9bbd151948a9765368c6" target="_blank" rel="noopener noreferrer">8a2b48901a08b3d2ec3a9bbd151948a9765368c6 ↗</a><button type="button" class="copy" data-copy="8a2b48901a08b3d2ec3a9bbd151948a9765368c6" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Merge stable into main.  (#3389)</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:28:50-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/30a7f7c8e6cf40c1a09f22ac83377c6ae1d201b5" target="_blank" rel="noopener noreferrer">30a7f7c8e6cf40c1a09f22ac83377c6ae1d201b5 ↗</a><button type="button" class="copy" data-copy="30a7f7c8e6cf40c1a09f22ac83377c6ae1d201b5" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Click-specific contribution guidelines (#3333)</pre><div class="meta"><span class="date" title="Author date">2026-04-28T23:18:20-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/d5fbd32842da361cc9be8658d94a64e9cc417fb5" target="_blank" rel="noopener noreferrer">d5fbd32842da361cc9be8658d94a64e9cc417fb5 ↗</a><button type="button" class="copy" data-copy="d5fbd32842da361cc9be8658d94a64e9cc417fb5" title="Copy commit id">Copy</button><span class="user"><span class="an">Rowlando13</span> <span class="ae">&lt;67291205+Rowlando13@users.noreply.github.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">add codespell pre-commit hook (#3373)</pre><div class="meta"><span class="date" title="Author date">2026-04-22T12:07:29-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/8bd8b4a074c55c03b6eb5666edc44a9c43df38a2" target="_blank" rel="noopener noreferrer">8bd8b4a074c55c03b6eb5666edc44a9c43df38a2 ↗</a><button type="button" class="copy" data-copy="8bd8b4a074c55c03b6eb5666edc44a9c43df38a2" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+<li class="entry" data-status="none"><pre class="msg">Release 8.3.3 (#3350)</pre><div class="meta"><span class="date" title="Author date">2026-04-22T09:20:53-07:00</span><a class="hash" href="https://github.com/pallets/click/commit/d777956105fde08e01dd895dde2b86ccdf558d59" target="_blank" rel="noopener noreferrer">d777956105fde08e01dd895dde2b86ccdf558d59 ↗</a><button type="button" class="copy" data-copy="d777956105fde08e01dd895dde2b86ccdf558d59" title="Copy commit id">Copy</button><span class="user"><span class="an">David Lord</span> <span class="ae">&lt;davidism@gmail.com&gt;</span></span></div></li>
+</ol>
+</details>
+</div>
+</details>
+</section>
+<section class="group group-quiet"><h2 class="group-title">No change</h2>
+<details class="repo repo-no_change" id="repo/beta" open>
+<summary class="repo-head"><span class="repo-name">beta</span> <span class="pill pill-quiet">No change</span><a class="anchor" href="#repo/beta" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<p class="reason reason-quiet">Branch `release/SG_19.18.0` not found on remote.</p>
+<dl class="branches">
+<dt>Target branch</dt><dd></dd>
+<dt>Base branch</dt><dd></dd>
+<dt>Matching candidate branches</dt><dd><ul class="cands"><li><code>origin/release/SG_19.17.0</code> </li><li><code>origin/release/SG_19.18</code> </li><li><code>origin/hotfix/SG_19.18.1</code> </li></ul></dd>
+</dl>
+</div>
+</details>
+<details class="repo repo-no_change" id="repo/epsilon" open>
+<summary class="repo-head"><span class="repo-name">epsilon</span> <span class="pill pill-quiet">No change</span><a class="anchor" href="#repo/epsilon" title="Link to this repository">#</a></summary>
+<div class="repo-body">
+<p class="reason reason-quiet">No commits on `origin/release/SG_19.18.0` that are not on `origin/hotfix/SG_19.17.1`.</p>
+<dl class="branches">
+<dt>Target branch</dt><dd><code>origin/release/SG_19.18.0</code></dd>
+<dt>Base branch</dt><dd><code>origin/hotfix/SG_19.17.1</code></dd>
+<dt>Matching candidate branches</dt><dd><ul class="cands"><li><code>origin/hotfix/SG_19.17.1</code> <span class="tag">base</span></li><li><code>origin/release/SG_19.18.0</code> <span class="tag">target</span></li></ul></dd>
+</dl>
+</div>
+</details>
+</section>
+</main>
+<script>
+(function(){
+  var root=document.documentElement;
+  function q(s,el){return Array.prototype.slice.call((el||document).querySelectorAll(s));}
+  function setHeights(){
+    var tb=document.getElementById('toolbar');
+    root.style.setProperty('--tb-h',(tb?tb.offsetHeight:0)+'px');
+    var rh=document.querySelector('.repo-head');
+    root.style.setProperty('--rh-h',(rh?rh.offsetHeight:0)+'px');
+  }
+  window.addEventListener('resize',setHeights); setHeights();
+
+  // Search index: file path(s), message, commit id, user name and email.
+  var entries=q('li.entry').map(function(li){
+    var file=li.closest('details.file');
+    var parts=[file?file.getAttribute('data-path'):''];
+    ['.old-path','.msg','.hash','.an','.ae'].forEach(function(s){var e=li.querySelector(s); if(e) parts.push(e.textContent);});
+    return {el:li,file:file,status:li.getAttribute('data-status'),text:parts.join('\n').toLowerCase()};
+  });
+  var search=document.getElementById('q');
+  var boxes=q('input.sf');
+  var stateEl=document.getElementById('filter-state');
+
+  function apply(){
+    var term=(search.value||'').trim().toLowerCase();
+    var allowed={}; boxes.forEach(function(b){allowed[b.value]=b.checked;});
+    var allOn=boxes.every(function(b){return b.checked;});
+    var active=!!term||!allOn;
+    entries.forEach(function(e){
+      var ok=(allowed[e.status]!==false)&&(!term||e.text.indexOf(term)!==-1);
+      e.el.classList.toggle('filtered',!ok);
+    });
+    q('details.file').forEach(function(f){
+      var any=f.querySelector('li.entry:not(.filtered)');
+      f.classList.toggle('filtered',!any);
+    });
+    q('details.repo-changes').forEach(function(r){
+      var any=r.querySelector('details.file:not(.filtered)');
+      var nm=r.querySelector('.no-match'); if(nm) nm.hidden=!!any;
+    });
+    stateEl.textContent=active?'Filter active: some entries are hidden. Clear filters to show everything.':'';
+  }
+  search.addEventListener('input',apply);
+  boxes.forEach(function(b){b.addEventListener('change',apply);});
+  document.getElementById('clear-filters').addEventListener('click',function(){
+    search.value=''; boxes.forEach(function(b){b.checked=true;}); apply();
+  });
+  function setAll(open){q('details.repo,details.file').forEach(function(d){d.open=open;});}
+  document.getElementById('expand-all').addEventListener('click',function(){setAll(true);});
+  document.getElementById('collapse-all').addEventListener('click',function(){setAll(false);});
+
+  // Open the sections that contain a linked anchor.
+  function openTarget(){
+    var id=location.hash.slice(1); try{id=decodeURIComponent(id);}catch(e){} if(!id) return;
+    var el=document.getElementById(id); if(!el) return;
+    for(var d=el; d; d=d.parentElement){ if(d.tagName==='DETAILS') d.open=true; }
+    el.scrollIntoView();
+  }
+  window.addEventListener('hashchange',openTarget); openTarget();
+
+  // Printing: expand every section (filters are ignored by the print stylesheet).
+  window.addEventListener('beforeprint',function(){setAll(true);});
+
+  // Copy commit id.
+  document.addEventListener('click',function(ev){
+    var b=ev.target.closest&&ev.target.closest('button.copy'); if(!b) return;
+    ev.preventDefault();
+    var text=b.getAttribute('data-copy');
+    function done(){var t=b.textContent; b.textContent='Copied'; setTimeout(function(){b.textContent=t;},1200);}
+    if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(done,fallback);}
+    else fallback();
+    function fallback(){
+      var ta=document.createElement('textarea'); ta.value=text; ta.setAttribute('readonly','');
+      ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select();
+      try{document.execCommand('copy'); done();}catch(e){} document.body.removeChild(ta);
+    }
+  });
+})();
+</script>
+</body>
+</html>
