@@ -489,18 +489,16 @@ def _strip_trailing_newlines(text: str) -> str:
 # to an address other than https://bitbucket.org). <repo> = <BASE>/projects/<KEY>/repos/<slug>
 # (personal repositories "~user": <BASE>/users/<user>/repos/<slug>)
 #   commit : <repo>/commits/<sha>#<path>
-#   compare: <repo>/compare/diff?targetBranch=refs%2Fheads%2F<target>
-#            &sourceBranch=refs%2Fheads%2F<base>#<path>
+#   compare: <repo>/compare/diff?sourceBranch=refs%2Fheads%2F<target>
+#            &targetBranch=refs%2Fheads%2F<base>#<path>
 #   file   : <repo>/browse/<path>?at=<target commit>
 #   The file format is from Atlassian's Bitbucket Server API docs
 #   (NavBuilder.BrowseRepoResource: /browse/...?at=<ref or commit>) and a community
 #   answer quoting browse/<path>?at=<branch>. The commit and compare formats are
 #   the ones Bitbucket Server's own pages use; Atlassian doesn't document them, so
-#   check one link of each kind on your server. In the compare/diff URL,
-#   targetBranch is the branch whose new changes are shown (the release being
-#   reviewed, e.g. 19.18.0) and sourceBranch is the branch it is compared from
-#   (the base, e.g. 19.17.1). This order was confirmed on a real Bitbucket Server
-#   by the reviewer: the opposite order showed the changes reversed. The project key and repository slug are used exactly as they
+#   check one link of each kind on your server. In compare/diff, "source" is the
+#   branch with the new changes (target) and "target" is the branch it would merge
+#   into (base). The project key and repository slug are used exactly as they
 #   appear in the remote URL.
 #
 # File links (column 1, "File ↗") open the file as it is at the target branch's
@@ -643,10 +641,8 @@ class LinkBuilder:
         if p == "azure":
             return f"{b}/branches?baseVersion=GB{eb}&targetVersion=GB{et}&_a=files"
         if p == "bitbucket-server":
-            # targetBranch = branch whose new changes are shown (target release),
-            # sourceBranch = branch it is compared from (base). See the notes above.
-            return (f"{b}/compare/diff?targetBranch={_enc_branch('refs/heads/' + target)}"
-                    f"&sourceBranch={_enc_branch('refs/heads/' + base)}#{ep}")
+            return (f"{b}/compare/diff?sourceBranch={_enc_branch('refs/heads/' + target)}"
+                    f"&targetBranch={_enc_branch('refs/heads/' + base)}#{ep}")
         return self._fill("compare", base=base, target=target, path=path)
 
     @property
