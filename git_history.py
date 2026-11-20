@@ -22,6 +22,7 @@ TARGET_BRANCH     = "release/SG_19.18.0"    # branch being released: <release|ho
 REMOTE_NAME       = "origin"                # remote to read branches from
 OUTPUT_FILE       = "index.html"            # generated HTML page
 BITBUCKET_BASE_URL = None                   # Bitbucket web address for links, e.g. "https://bitbucket.mycompany.com"
+FALLBACK_BASE_BRANCH = "master"             # base used when no lower release/hotfix exists (None = no fallback)
 DIFF_URL_TEMPLATE = None                    # only needed for self-hosted / unrecognised git hosts
 #
 # BITBUCKET_BASE_URL: set this when your repositories are on Bitbucket. Every link
@@ -34,6 +35,13 @@ DIFF_URL_TEMPLATE = None                    # only needed for self-hosted / unre
 #   Include the context path if your server has one: "https://host/bitbucket".
 #   Leave it as None to detect the platform from the remote URL instead.
 #   It can't be combined with DIFF_URL_TEMPLATE.
+#
+# FALLBACK_BASE_BRANCH: when the target branch exists but no release/ or hotfix/
+#   branch of the same country has a lower version, compare against
+#   <REMOTE_NAME>/<FALLBACK_BASE_BRANCH> instead (e.g. origin/master). The page marks
+#   such repositories as using the fallback base. If that branch doesn't exist on the
+#   remote either, the repository shows "No previous branch found". Set it to None to
+#   turn the fallback off. It is never used for a tie or a missing target branch.
 #
 # DIFF_URL_TEMPLATE example (commit and compare links required, file link optional):
 # DIFF_URL_TEMPLATE = {
@@ -133,10 +141,11 @@ class Config:
     output_file: str
     diff_url_template: Optional[Dict[str, str]]
     bitbucket_base_url: Optional[str] = None
+    fallback_base_branch: Optional[str] = None
 
 
 def load_config(repos_folder, target_branch, remote_name, output_file,
-                diff_url_template, bitbucket_base_url=None) -> Config:
+                diff_url_template, bitbucket_base_url=None, fallback_base_branch=None) -> Config:
     """Validate all inputs. Raises ConfigError with a clear message."""
     if not isinstance(target_branch, str) or parse_branch_name(target_branch) is None:
         raise ConfigError(
@@ -156,8 +165,16 @@ def load_config(repos_folder, target_branch, remote_name, output_file,
     bb = _validate_bitbucket_base_url(bitbucket_base_url)
     if bb and template:
         raise ConfigError("Set either BITBUCKET_BASE_URL or DIFF_URL_TEMPLATE, not both.")
+    if fallback_base_branch is not None and (
+            not isinstance(fallback_base_branch, str) or not fallback_base_branch
+            or fallback_base_branch != fallback_base_branch.strip()
+            or fallback_base_branch.startswith(("-", "/", "refs/"))
+            or re.search(r"[\s~^:?*\[\\]|\.\.|@\{", fallback_base_branch)):
+        raise ConfigError(
+            f"FALLBACK_BASE_BRANCH {fallback_base_branch!r} must be None or a branch name "
+            "without the remote prefix, such as 'master'.")
     return Config(os.path.abspath(repos_folder), parse_branch_name(target_branch),
-                  remote_name, output_file, template, bb)
+                  remote_name, output_file, template, bb, fallback_base_branch)
 
 
 def _validate_bitbucket_base_url(url) -> Optional[str]:
@@ -264,6 +281,8 @@ class BranchSelection:
     # other candidates with the same version as the chosen base (e.g. a hotfix/
     # branch when release/ was preferred); shown on the page, never compared
     same_version_as_base: List[BranchName] = dataclasses.field(default_factory=list)
+    base_is_fallback: bool = False             # base is FALLBACK_BASE_BRANCH, not a candidate
+    fallback_ref: Optional[str] = None         # "origin/master" when a fallback was configured
 
 
 def list_remote_branches(repo: str) -> List[str]:
@@ -281,7 +300,8 @@ def list_remote_branches(repo: str) -> List[str]:
     return refs
 
 
-def select_branches(remote_refs: Sequence[str], remote: str, target: BranchName) -> BranchSelection:
+def select_branches(remote_refs: Sequence[str], remote: str, target: BranchName,
+                    fallback_base: Optional[str] = None) -> BranchSelection:
     sel = BranchSelection()
     prefix = remote + "/"
     for ref in remote_refs:
@@ -304,6 +324,13 @@ def select_branches(remote_refs: Sequence[str], remote: str, target: BranchName)
 
     lower = [c for c in sel.candidates if c.version_key < target.version_key]
     if not lower:
+        if fallback_base:
+            sel.fallback_ref = prefix + fallback_base
+            if sel.fallback_ref in remote_refs:
+                sel.base_ref = sel.fallback_ref
+                sel.base_is_fallback = True
+                sel.outcome = "ok"
+                return sel
         sel.outcome = "no_base"
         return sel
     best = max(c.version_key for c in lower)
@@ -768,7 +795,8 @@ def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoRepo
             rep.reason = f"Fetch failed, so no data is shown for this repository.\n{exc}"
             return rep
 
-        sel = select_branches(list_remote_branches(rep.path), remote, target)
+        sel = select_branches(list_remote_branches(rep.path), remote, target,
+                              cfg.fallback_base_branch)
         rep.selection = sel
         for ref, why in sel.ignored:
             log(f"  [{name}] ignored branch {ref}: {why}")
@@ -779,6 +807,8 @@ def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoRepo
             return rep
         if sel.outcome == "no_base":
             rep.reason = f"No previous branch found for `{target.country}` below `{target.version}`"
+            if sel.fallback_ref:
+                rep.reason += f", and the fallback base branch `{sel.fallback_ref}` was not found on remote."
             return rep
         if sel.outcome == "tie":
             names = ", ".join(f"`{remote}/{b.name}`" for b in sel.tie)
@@ -831,11 +861,12 @@ class Report:
 
 
 def generate_report(repos_folder, target_branch, remote_name, output_file, diff_url_template,
-                    bitbucket_base_url=None, *, log: Callable[[str], None] = print,
+                    bitbucket_base_url=None, fallback_base_branch=None, *,
+                    log: Callable[[str], None] = print,
                     now: Optional[_dt.datetime] = None) -> Report:
     """Build the review page. Raises ConfigError for invalid inputs, before any git call."""
     cfg = load_config(repos_folder, target_branch, remote_name, output_file, diff_url_template,
-                      bitbucket_base_url)
+                      bitbucket_base_url, fallback_base_branch)
     generated = (now or _dt.datetime.now().astimezone()).isoformat(timespec="seconds")
 
     log(f"Target branch {cfg.target.name}: country {cfg.target.country}, "
@@ -906,7 +937,8 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
     for k, v in (("Generated", generated), ("REPOS_FOLDER", cfg.repos_folder),
                  ("TARGET_BRANCH", cfg.target.name), ("Country", cfg.target.country),
                  ("Version", cfg.target.version), ("Remote", cfg.remote_name),
-                 ("BITBUCKET_BASE_URL", cfg.bitbucket_base_url or "")):
+                 ("BITBUCKET_BASE_URL", cfg.bitbucket_base_url or ""),
+                 ("FALLBACK_BASE_BRANCH", cfg.fallback_base_branch or "")):
         w(f"<dt>{esc(k)}</dt><dd><code>{esc(v)}</code></dd>\n")
     w("</dl>\n")
 
@@ -964,7 +996,9 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
 
 def _branch_pair(r: RepoReport) -> str:
     if r.base_branch and r.target_branch:
-        return f"<code>{esc(r.base_branch)}</code> → <code>{esc(r.target_branch)}</code>"
+        fb = (' <span class="tag tag-fallback">fallback base</span>'
+              if r.selection and r.selection.base_is_fallback else "")
+        return f"<code>{esc(r.base_branch)}</code>{fb} → <code>{esc(r.target_branch)}</code>"
     if r.target_branch:
         return f"→ <code>{esc(r.target_branch)}</code>"
     return ""
@@ -977,6 +1011,10 @@ def _render_branch_block(w, r: RepoReport, remote: str):
     w('<dl class="branches">\n')
     w(f"<dt>Target branch</dt><dd>{_code_or_empty(sel.target_ref)}</dd>\n")
     w(f"<dt>Base branch</dt><dd>{_code_or_empty(sel.base_ref)}</dd>\n")
+    if sel.base_is_fallback:
+        w(f'<dt>Fallback base</dt><dd class="fallback-note">No <code>release/</code> or '
+          f"<code>hotfix/</code> branch has a version lower than the target, so "
+          f"<code>{esc(sel.base_ref)}</code> (FALLBACK_BASE_BRANCH) is used as the base.</dd>\n")
     w("<dt>Matching candidate branches</dt><dd>")
     if sel.candidates:
         w('<ul class="cands">')
@@ -1148,6 +1186,8 @@ details.repo-no_change>.repo-head{background-color:#fbfbfc;font-weight:500;color
 .cands{margin:0;padding-left:18px}
 .tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--muted)}
 .tag-same,.same-version{background:#fff8c5}
+.tag-fallback{background:#fff1e5;border-color:#bc4c00;color:#953800;font-weight:600}
+.fallback-note{background:#fff1e5;border:1px solid #bc4c00;border-radius:4px;padding:2px 6px}
 .same-version{border:1px solid #d4a72c;border-radius:4px;padding:2px 6px}
 .note{background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:6px 10px}
 .note-small{color:var(--muted);font-size:12px;margin:2px 0 8px}
@@ -1295,7 +1335,7 @@ JS = r"""
 def main() -> int:
     try:
         generate_report(REPOS_FOLDER, TARGET_BRANCH, REMOTE_NAME, OUTPUT_FILE, DIFF_URL_TEMPLATE,
-                        BITBUCKET_BASE_URL)
+                        BITBUCKET_BASE_URL, FALLBACK_BASE_BRANCH)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
