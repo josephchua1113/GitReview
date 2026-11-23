@@ -1647,17 +1647,24 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
 
     # Summary: per repository, the files changed by more than one user
     if changed:
-        w('<section class="summary"><h2>Files modified by more than one user</h2>\n')
+        w('<section class="summary"><h2>Files modified by more than one user</h2>\n'
+          '<p class="muted">Test files are left out of this summary. They are still listed '
+          'in the Test group below.</p>\n')
         for r in changed:
-            multi = sorted((fs for fs in file_stats(r) if len(fs.users) > 1),
+            multi = sorted((fs for fs in file_stats(r) if len(fs.users) > 1 and fs.type != "Test"),
                            key=lambda fs: (-len(fs.users), _sort_key(fs.path)))
             w(f'<h3><a href="#{esc(anchor_id("stats", r.name))}">{esc(r.name)}</a> '
               f'<span class="muted">({len(multi)} file{"s" if len(multi) != 1 else ""})</span></h3>\n')
             if not multi:
                 w('<p class="muted">No file was modified by more than one user.</p>\n')
                 continue
-            w('<table class="stats summary-table"><thead><tr><th>File</th><th>Type</th>'
-              '<th class="num">Users</th><th class="num">Commits</th><th>Users</th></tr></thead><tbody>\n')
+            w('<table class="stats summary-table sortable"><thead><tr>'
+              '<th aria-sort="none"><button type="button" class="sort" data-kind="text">File</button></th>'
+              '<th aria-sort="none"><button type="button" class="sort" data-kind="text">Type</button></th>'
+              '<th class="num" aria-sort="descending"><button type="button" class="sort" data-kind="num">Users</button></th>'
+              '<th class="num" aria-sort="none"><button type="button" class="sort" data-kind="num">Commits</button></th>'
+              '<th aria-sort="none"><button type="button" class="sort" data-kind="text">User names</button></th>'
+              '</tr></thead><tbody>\n')
             for fs in multi:
                 sid = anchor_id("stats-file", r.name, fs.path)
                 w(f'<tr><td class="path"><a href="#{esc(sid)}">{esc(fs.path)}</a></td>'
@@ -1723,6 +1730,12 @@ main{padding:12px 20px 40px}
 .summary{margin:0 0 24px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fbfbfc}
 .summary h2{font-size:16px;margin:4px 0 8px}.summary h3{font-size:14px;margin:12px 0 4px}
 .summary-table td.path{width:40%}
+.summary-table th{white-space:nowrap}
+button.sort{font:inherit;font-weight:600;border:0;background:none;padding:0;cursor:pointer;color:inherit}
+button.sort::after{content:" \2195";color:#818b98}
+th[aria-sort=ascending] button.sort::after{content:" \25B2";color:var(--fg)}
+th[aria-sort=descending] button.sort::after{content:" \25BC";color:var(--fg)}
+@media print{button.sort::after{content:""}}
 tr:target{background:#fff8c5}
 .pill{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;border:1px solid}
 .pill-error{color:#fff;background:#cf222e;border-color:#cf222e}.pill-no_change{color:#818b98;border-color:var(--line)}
@@ -1753,6 +1766,30 @@ STATS_JS = r"""
   document.getElementById('open-all').addEventListener('click',function(){all(true);});
   document.getElementById('close-all').addEventListener('click',function(){all(false);});
   window.addEventListener('beforeprint',function(){all(true);});
+  // Click a summary column header to sort by it; click again to reverse.
+  document.querySelectorAll('table.sortable').forEach(function(t){
+    var body=t.tBodies[0], heads=t.tHead.rows[0].cells;
+    Array.prototype.forEach.call(body.rows,function(r,i){r.dataset.i=i;});
+    Array.prototype.forEach.call(heads,function(th,col){
+      var b=th.querySelector('button.sort'); if(!b) return;
+      b.addEventListener('click',function(){
+        var num=b.dataset.kind==='num';
+        var dir=th.getAttribute('aria-sort')==='ascending'?'descending':
+                th.getAttribute('aria-sort')==='descending'?'ascending':(num?'descending':'ascending');
+        Array.prototype.forEach.call(heads,function(h){h.setAttribute('aria-sort','none');});
+        th.setAttribute('aria-sort',dir);
+        var sign=dir==='ascending'?1:-1;
+        var rows=Array.prototype.slice.call(body.rows);
+        rows.sort(function(a,c){
+          var x=a.cells[col].textContent, y=c.cells[col].textContent, d;
+          if(num){d=(parseFloat(x)||0)-(parseFloat(y)||0);}
+          else{d=x.localeCompare(y,undefined,{numeric:true,sensitivity:'base'});}
+          return d*sign||(a.dataset.i-c.dataset.i);
+        });
+        rows.forEach(function(r){body.appendChild(r);});
+      });
+    });
+  });
 })();
 """
 
