@@ -1502,7 +1502,8 @@ JS = r"""
 # Merge commits with no file changes are not counted, as they change no file.
 
 FILE_TYPES = ["Controller", "Processor", "Route", "Config", "API", "Builder", "Mapper",
-              "VO", "Request", "Response", "Test"]
+              "VO", "Request", "Response", "Test", "Properties", "Util", "Constant",
+              "Resources", "Template"]
 OTHER_TYPE = "Other"
 # words in a file name that count as each type (compared case-insensitively)
 _TYPE_WORDS = {
@@ -1517,6 +1518,16 @@ _TYPE_WORDS = {
     "Request": ("request", "requests"),
     "Response": ("response", "responses"),
     "Test": ("test", "tests", "spec", "specs"),   # decided separately, see file_type
+    "Properties": ("properties", "property", "props"),
+    "Util": ("util", "utils", "utility", "utilities"),
+    "Constant": ("constant", "constants", "const", "consts"),
+}
+# Folder groups: files whose name matches no type above, but that sit in one of
+# these folders (at any depth), go to the folder's group instead of Other.
+_FOLDER_TYPES = {
+    "resources": "Resources", "resource": "Resources",
+    "routes": "Route", "route": "Route",
+    "templates": "Template", "template": "Template",
 }
 _WORD_TO_TYPE = {word: t for t, words in _TYPE_WORDS.items() for word in words}
 
@@ -1538,7 +1549,11 @@ def file_type(path: str) -> str:
     "IT" ("UserControllerTest.java", "test_api.py", "user.spec.ts", "UserServiceIT.java").
     Otherwise the last word that names a type decides: "UserController.java" ->
     Controller, "OrderRequestMapper.java" -> Mapper, "application-config.yml" ->
-    Config, "UserVO.java" -> VO. No match -> Other.
+    Config, "UserVO.java" -> VO, "DateUtils.java" -> Util, "ErrorConstants.java" ->
+    Constant. A ".properties" file is Properties.
+    If the name matches nothing, the folder decides: a file anywhere under a
+    resources/, routes/ or template(s)/ folder goes to Resources, Route or Template
+    (the innermost such folder wins). Otherwise -> Other.
     """
     name = path.rsplit("/", 1)[-1]
     stem = name.split(".", 1)[0] if not name.startswith(".") else name.lstrip(".").split(".", 1)[0]
@@ -1554,7 +1569,15 @@ def file_type(path: str) -> str:
         t = _WORD_TO_TYPE.get(word.lower())
         if t and t != "Test":
             found = t
-    return found or OTHER_TYPE
+    if found:
+        return found
+    if name.lower().endswith(".properties"):
+        return "Properties"
+    for folder in reversed(path.split("/")[:-1]):
+        t = _FOLDER_TYPES.get(folder.lower())
+        if t:
+            return t
+    return OTHER_TYPE
 
 
 @dataclasses.dataclass
@@ -1603,7 +1626,9 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
       "branch: <b>Commits</b> = number of commits that changed the file, <b>Users</b> = number "
       "of different commit authors. Files are grouped by a type taken from the file name "
       "(e.g. <code>UserController.java</code> → Controller, <code>UserControllerTest.java</code> "
-      "→ Test). Click a count to see the commits.</p>\n")
+      "→ Test, <code>DateUtils.java</code> → Util); a file whose name matches no type but "
+      "sits in a <code>resources/</code>, <code>routes/</code> or <code>template(s)/</code> "
+      "folder goes to Resources, Route or Template. Click a commit list to see the commits.</p>\n")
     w('<div class="tools"><button type="button" id="open-all">Expand all commit lists</button>'
       '<button type="button" id="close-all">Collapse all commit lists</button></div>\n')
     w("</header>\n<main>\n")
@@ -1619,6 +1644,27 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
         w("</ul></section>\n")
     if not changed:
         w("<p>No repository has commits to summarise.</p>\n")
+
+    # Summary: per repository, the files changed by more than one user
+    if changed:
+        w('<section class="summary"><h2>Files modified by more than one user</h2>\n')
+        for r in changed:
+            multi = sorted((fs for fs in file_stats(r) if len(fs.users) > 1),
+                           key=lambda fs: (-len(fs.users), _sort_key(fs.path)))
+            w(f'<h3><a href="#{esc(anchor_id("stats", r.name))}">{esc(r.name)}</a> '
+              f'<span class="muted">({len(multi)} file{"s" if len(multi) != 1 else ""})</span></h3>\n')
+            if not multi:
+                w('<p class="muted">No file was modified by more than one user.</p>\n')
+                continue
+            w('<table class="stats summary-table"><thead><tr><th>File</th><th>Type</th>'
+              '<th class="num">Users</th><th class="num">Commits</th><th>Users</th></tr></thead><tbody>\n')
+            for fs in multi:
+                sid = anchor_id("stats-file", r.name, fs.path)
+                w(f'<tr><td class="path"><a href="#{esc(sid)}">{esc(fs.path)}</a></td>'
+                  f'<td>{esc(fs.type)}</td><td class="num">{len(fs.users)}</td>'
+                  f'<td class="num">{len(fs.commits)}</td><td>{esc(", ".join(fs.users))}</td></tr>\n')
+            w("</tbody></table>\n")
+        w("</section>\n")
 
     for r in changed:
         rid = anchor_id("stats", r.name)
@@ -1640,7 +1686,8 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
               '<th class="num">Users</th><th>Commit messages</th></tr></thead><tbody>\n')
             for fs in group:
                 fid = anchor_id("file", r.name, fs.path)
-                w(f'<tr><td class="path"><a href="{esc(review_href)}#{esc(fid)}" '
+                sid = anchor_id("stats-file", r.name, fs.path)
+                w(f'<tr id="{esc(sid)}"><td class="path"><a href="{esc(review_href)}#{esc(fid)}" '
                   f'title="Open this file on the review page">{esc(fs.path)}</a></td>'
                   f'<td class="num">{len(fs.commits)}</td>'
                   f'<td class="num" title="{esc(", ".join(fs.users))}">{len(fs.users)}</td><td>')
@@ -1673,6 +1720,10 @@ h1{font-size:20px;margin:0 0 6px}
 .tools button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;margin-right:6px}
 main{padding:12px 20px 40px}
 .others ul{padding-left:18px}.reason{color:var(--muted);font-size:13px}
+.summary{margin:0 0 24px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fbfbfc}
+.summary h2{font-size:16px;margin:4px 0 8px}.summary h3{font-size:14px;margin:12px 0 4px}
+.summary-table td.path{width:40%}
+tr:target{background:#fff8c5}
 .pill{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;border:1px solid}
 .pill-error{color:#fff;background:#cf222e;border-color:#cf222e}.pill-no_change{color:#818b98;border-color:var(--line)}
 details.repo{border:1px solid var(--line);border-radius:8px;margin:0 0 16px}

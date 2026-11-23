@@ -6,13 +6,16 @@ git_history.py is never edited).
 """
 
 import contextlib
+import html
 import html.parser
 import io
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+import urllib.parse
 from unittest import mock
 
 import git_history as gh
@@ -124,7 +127,7 @@ class EntryExtractor(html.parser.HTMLParser):
         classes = (a.get("class") or "").split()
         if tag == "details" and "repo" in classes:
             self.repo = a["id"]
-        if tag == "details" and "file" in classes:
+        if "file" in classes and "data-path" in a:
             self.path = a.get("data-path")
         if tag == "a" and a.get("href", "").startswith("http"):
             self.links.append((classes, a["href"], a.get("target"), a.get("rel")))
@@ -182,6 +185,9 @@ class Fixture:
         self.build_beta()
         self.build_gamma()
         self.build_delta()
+        self.build_eta()
+        self.build_theta()
+        self.build_iota()
         self.build_epsilon()
         self.build_zeta()
         os.makedirs(os.path.join(self.repos, "notes"))           # not a git repo
@@ -291,15 +297,57 @@ class Fixture:
         r.push("feature/whatever")
 
     def build_delta(self):
-        # forced tie for the closest lower version
+        # release/ and hotfix/ share 19.17.0: release/ is the base
         r = Repo(self.repos, "delta", self.remotes)
         r.write("x.txt", "1\n")
         r.commit("delta one")
         r.push("release/SG_19.10.0")
         r.push("release/SG_19.17.0")
-        r.push("hotfix/SG_19.17")      # equals 19.17.0 numerically
+        r.write("x.txt", "hf\n")
+        r.commit("delta hotfix only")
+        r.push("hotfix/SG_19.17.0")
+        r.git("reset", "-q", "--hard", "HEAD~1")
         r.write("x.txt", "2\n")
-        r.commit("delta two")
+        self.delta_target_commit = r.commit("delta two")
+        r.push(TARGET)
+
+    def build_iota(self):
+        # target exists, nothing lower, but origin/master exists (fallback base)
+        r = Repo(self.repos, "iota", self.remotes)
+        r.write("x.txt", "1\n")
+        r.commit("iota on master")
+        r.push("master")
+        r.push("release/SG_20.0.0")
+        r.write("y.txt", "2\n")
+        self.iota_target_commit = r.commit("iota only on target")
+        r.push(TARGET)
+
+    def build_theta(self):
+        # a tie that can't be resolved: two hotfix/ branches with the same version
+        r = Repo(self.repos, "theta", self.remotes)
+        r.write("x.txt", "1\n")
+        r.commit("theta one")
+        r.push("release/SG_19.10.0")
+        r.push("hotfix/SG_19.17.0")
+        r.push("hotfix/SG_19.017.0")
+        r.write("x.txt", "2\n")
+        r.commit("theta two")
+        r.push(TARGET)
+
+    def build_eta(self):
+        # 19.17 and 19.17.0 both exist: 19.17.0 is the higher one and is the base
+        r = Repo(self.repos, "eta", self.remotes)
+        r.write("x.txt", "1\n")
+        r.commit("eta on 19.10.0")
+        r.push("release/SG_19.10.0")
+        r.write("x.txt", "2\n")
+        r.commit("eta on 19.17")
+        r.push("hotfix/SG_19.17")
+        r.write("x.txt", "3\n")
+        r.commit("eta on 19.17.0")
+        r.push("release/SG_19.17.0")
+        r.write("x.txt", "4\n")
+        self.eta_target_commit = r.commit("eta only on target")
         r.push(TARGET)
 
     def build_epsilon(self):
@@ -324,10 +372,11 @@ class Fixture:
 # tests
 # --------------------------------------------------------------------------
 
-def run_report(repos, target=TARGET, template=None, out=None):
+def run_report(repos, target=TARGET, template=None, out=None, bitbucket=None, fallback=None):
     logs = []
     out = out or os.path.join(tempfile.mkdtemp(prefix="ghout-"), "index.html")
-    rep = gh.generate_report(repos, target, "origin", out, template, log=logs.append)
+    rep = gh.generate_report(repos, target, "origin", out, template, bitbucket, fallback,
+                             log=logs.append)
     return rep, logs
 
 
@@ -357,6 +406,17 @@ class ConfigTests(unittest.TestCase):
             gh.generate_report(missing, TARGET, "origin", "x.html", None, log=lambda s: None)
         self.assertIn("REPOS_FOLDER", str(cm.exception))
 
+    def test_bad_bitbucket_base_url(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        tpl = {"commit": "{base_url}/c/{commit}", "compare": "{base_url}/x"}
+        for bad, template in (("bitbucket.corp.example", None), ("https://h/x?y=1", None),
+                              ("https://user:pw@h", None), ("https://bitbucket.corp.example", tpl)):
+            with self.subTest(bad=bad), self.assertRaises(gh.ConfigError) as cm:
+                gh.generate_report(tmp, TARGET, "origin", os.path.join(tmp, "o.html"), template, bad,
+                                   log=lambda s: None)
+            self.assertIn("BITBUCKET_BASE_URL", str(cm.exception))
+
     def test_bad_template(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp)
@@ -375,7 +435,9 @@ class ConfigTests(unittest.TestCase):
     def test_version_ordering(self):
         self.assertLess(gh.version_key("19.9.0"), gh.version_key("19.17.1"))
         self.assertLess(gh.version_key("19.17.1"), gh.version_key("19.18.0"))
-        self.assertEqual(gh.version_key("19.17"), gh.version_key("19.17.0"))
+        self.assertLess(gh.version_key("19.17"), gh.version_key("19.17.0"))
+        self.assertLess(gh.version_key("19.17.0"), gh.version_key("19.17.1"))
+        self.assertEqual(gh.version_key("19.017.0"), gh.version_key("19.17.0"))
 
 
 class BranchSelectionUnitTests(unittest.TestCase):
@@ -391,6 +453,26 @@ class BranchSelectionUnitTests(unittest.TestCase):
         self.assertEqual(s.outcome, "ok")
         self.assertEqual(s.base_ref, "origin/hotfix/SG_19.17.1")
         self.assertEqual(s.target_ref, "origin/" + TARGET)
+
+    def test_user_reported_set(self):
+        s = self.sel(["origin/release/SG_19.10.0", "origin/hotfix/SG_19.17",
+                      "origin/release/SG_19.17.0", "origin/" + TARGET])
+        self.assertEqual((s.outcome, s.base_ref), ("ok", "origin/release/SG_19.17.0"))
+
+    def test_same_version_release_preferred(self):
+        s = self.sel(["origin/release/SG_19.10.0", "origin/hotfix/SG_19.17.0",
+                      "origin/release/SG_19.17.0", "origin/" + TARGET])
+        self.assertEqual((s.outcome, s.base_ref), ("ok", "origin/release/SG_19.17.0"))
+        self.assertEqual([c.name for c in s.same_version_as_base], ["hotfix/SG_19.17.0"])
+
+    def test_unresolvable_ties(self):
+        for refs in (["origin/hotfix/SG_19.17.0", "origin/hotfix/SG_19.017.0"],
+                     ["origin/release/SG_19.17.0", "origin/release/SG_19.017.0"],
+                     ["origin/release/SG_19.17.0", "origin/release/SG_19.017.0", "origin/hotfix/SG_19.17.0"]):
+            with self.subTest(refs=refs):
+                s = self.sel(refs + ["origin/" + TARGET])
+                self.assertEqual(s.outcome, "tie")
+                self.assertIsNone(s.base_ref)
 
     def test_numeric_not_lexicographic(self):
         s = self.sel(["origin/release/SG_19.9.0", "origin/release/SG_19.10.0", "origin/" + TARGET])
@@ -417,7 +499,7 @@ class IntegrationTests(unittest.TestCase):
 
     # ---- discovery / console ---------------------------------------------
     def test_discovery(self):
-        self.assertEqual(sorted(self.by_name), ["alpha", "beta", "delta", "epsilon", "gamma", "zeta"])
+        self.assertEqual(sorted(self.by_name), ["alpha", "beta", "delta", "epsilon", "eta", "gamma", "iota", "theta", "zeta"])
         self.assertEqual(self.report.skipped, ["notes"])
         self.assertIn("Skipped (not a git repository): notes", self.logs)
 
@@ -454,13 +536,43 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(g.commits, [])
         self.assertNotIn("gamma one", self.page)
 
-    def test_tie_is_error(self):
+    def test_19_17_vs_19_17_0_picks_19_17_0(self):
+        # candidates: release/SG_19.10.0, hotfix/SG_19.17, release/SG_19.17.0, target
+        e = self.by_name["eta"]
+        self.assertEqual(e.state, gh.STATE_CHANGES)
+        self.assertEqual([c.name for c in e.selection.candidates],
+                         ["release/SG_19.10.0", "hotfix/SG_19.17", "release/SG_19.17.0", TARGET])
+        self.assertEqual(e.base_branch, "origin/release/SG_19.17.0")
+        self.assertEqual([c.hash for c in e.commits], [self.fx.eta_target_commit])
+        self.assertNotIn("eta on 19.17.0", self.page)
+        self.assertNotIn("eta on 19.17\n", self.page)
+
+    def test_release_preferred_over_hotfix_with_same_version(self):
+        # candidates: release/SG_19.10.0, hotfix/SG_19.17.0, release/SG_19.17.0, target
         d = self.by_name["delta"]
-        self.assertEqual(d.state, gh.STATE_ERROR)
-        self.assertIsNone(d.base_branch)
-        self.assertIn("`origin/hotfix/SG_19.17`", d.reason)
-        self.assertIn("`origin/release/SG_19.17.0`", d.reason)
-        self.assertNotIn("delta two", self.page)
+        self.assertEqual(d.state, gh.STATE_CHANGES)
+        self.assertEqual(d.base_branch, "origin/release/SG_19.17.0")
+        self.assertEqual([c.name for c in d.selection.same_version_as_base], ["hotfix/SG_19.17.0"])
+        self.assertEqual([c.hash for c in d.commits], [self.fx.delta_target_commit])
+        self.assertNotIn("delta hotfix only", self.page)
+        sec = self.page[self.page.index('id="repo/delta"'):]
+        sec = sec[:sec.index("</details>")]
+        self.assertIn("<dt>Same version as base</dt>", sec)
+        self.assertIn("<code>origin/hotfix/SG_19.17.0</code> has the same version as the base branch", sec)
+
+    def test_no_fallback_when_not_configured(self):
+        i = self.by_name["iota"]
+        self.assertEqual(i.state, gh.STATE_ERROR)
+        self.assertEqual(i.reason, "No previous branch found for `SG` below `19.18.0`")
+        self.assertNotIn("iota only on target", self.page)
+
+    def test_unresolvable_tie_is_error(self):
+        t = self.by_name["theta"]
+        self.assertEqual(t.state, gh.STATE_ERROR)
+        self.assertIsNone(t.base_branch)
+        self.assertIn("`origin/hotfix/SG_19.017.0`", t.reason)
+        self.assertIn("`origin/hotfix/SG_19.17.0`", t.reason)
+        self.assertNotIn("theta two", self.page)
 
     # ---- scope --------------------------------------------------------------
     def test_scope_only_base_to_target(self):
@@ -509,7 +621,13 @@ class IntegrationTests(unittest.TestCase):
                  e["email"].strip("<>"), e.get("old")))
         self.assertEqual(got, self.fx.expected["alpha"])
         # no entries from any other repository
-        self.assertEqual({e["repo"] for e in self.ex.entries}, {"repo/alpha"})
+        self.assertEqual({e["repo"] for e in self.ex.entries}, {"repo/alpha", "repo/delta", "repo/eta"})
+        eta = [(e["path"], e["status"], e["msg"], e["hash"]) for e in self.ex.entries
+               if e["repo"] == "repo/eta"]
+        self.assertEqual(eta, [("x.txt", "M", "eta only on target", self.fx.eta_target_commit)])
+        delta = [(e["path"], e["status"], e["msg"], e["hash"]) for e in self.ex.entries
+                 if e["repo"] == "repo/delta"]
+        self.assertEqual(delta, [("x.txt", "M", "delta two", self.fx.delta_target_commit)])
 
     def test_file_and_repo_order(self):
         a = self.by_name["alpha"]
@@ -541,7 +659,8 @@ class IntegrationTests(unittest.TestCase):
         # the remotes are local paths: no platform, no template
         self.assertEqual(self.ex.links, [])
         self.assertIn("Links aren’t available for this repository", self.page)
-        self.assertEqual(self.page.count("Links aren’t available"), 1)
+        # one note per repository with changes (alpha, delta and eta)
+        self.assertEqual(self.page.count("Links aren’t available"), 3)
 
     def test_candidates_listed_with_remote_prefix(self):
         # beta has no target; its candidate list must still show full remote branch names
@@ -558,9 +677,292 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("DIFF_URL_TEMPLATE uses {base_url}, but the remote URL cannot be converted",
                       rep.html)
 
+    def test_three_column_layout(self):
+        # every file row: column 1 = path, column 2 = collapsible code diff,
+        # column 3 = collapsible changes; both open by default
+        rows = re.findall(r'<div class="file[^"]*" id="[^"]*" data-path="[^"]*">\n'
+                          r'<div class="file-col">.*?</div></div></div>\n'
+                          r'<details class="diff-col" open><summary class="diff-head">Code diff</summary>\n'
+                          r'.*?</details>\n'
+                          r'<details class="detail-col" open><summary class="detail-head">Changes</summary>',
+                          self.page, flags=re.S)
+        n_rows = sum(len(r.files) + (1 if r.no_file_commits else 0)
+                     for r in self.report.repos if r.state == gh.STATE_CHANGES)
+        self.assertEqual(len(rows), n_rows)
+        self.assertEqual(self.page.count('<details class="detail-col" open>'), n_rows)
+        self.assertEqual(self.page.count('<details class="diff-col" open>'), n_rows)
+        self.assertIn('id="toggle-details"', self.page)
+        self.assertIn('id="toggle-diff"', self.page)
+        for row in rows:
+            col1 = row[row.index('<div class="file-col">'):row.index('<details class="diff-col"')]
+            self.assertNotIn("badge", col1)
+            col2 = row[row.index('<details class="diff-col"'):row.index('<details class="detail-col"')]
+            self.assertNotIn("badge", col2)
+
+    def _diff_cell(self, repo, path):
+        fid = gh.anchor_id("file", repo, path)
+        sec = self.page[self.page.index(f'id="{gh.esc(fid)}"'):]
+        return sec[sec.index('<details class="diff-col"'):sec.index('<details class="detail-col"')]
+
+    def test_code_diff_matches_git(self):
+        a = self.by_name["alpha"]
+        repo = self.fx.alpha.path
+        rng = "refs/remotes/origin/hotfix/SG_19.17.1...refs/remotes/origin/release/SG_19.18.0"
+        for path, entries in a.files:
+            if "\ufffd" in path:
+                # a non-UTF-8 name can't be given to git as a pathspec here, so check content
+                self.assertIn("\n+x\n", a.diffs[path][0])
+                continue
+            old = sorted({ch.old_path for _, ch in entries if ch.old_path})
+            p = subprocess.run(["git", "-C", repo, "--literal-pathspecs", "diff", rng, "--no-color",
+                                "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--", path, *old],
+                               capture_output=True, check=True)
+            want = p.stdout.decode("utf-8", errors="replace")
+            self.assertEqual(a.diffs[path], (want, ""), path)
+            # shown: every line from the first @@ on; the header only when there is no @@
+            raw = want.rstrip("\n").split("\n")
+            if any(l.startswith("@@") for l in raw):
+                expected = raw[next(k for k, l in enumerate(raw) if l.startswith("@@")):]
+            else:
+                expected = [l for l in raw if not l.startswith(("diff --git ", "index ", "--- ", "+++ "))]
+            cell = self._diff_cell("alpha", path)
+            lines = re.findall(r'<span class="d[mhadc]">(.*?)</span>', cell)
+            self.assertEqual([html.unescape(l) for l in lines], expected, path)
+            for hdr in ("diff --git", "index ", "--- ", "+++ "):
+                self.assertNotIn(f'<span class="dm">{hdr}', cell, path)
+                self.assertNotIn(f'<span class="dh">{hdr}', cell, path)
+
+    def test_code_diff_kinds(self):
+        cfg = self._diff_cell("alpha", "app/config.yml")
+        self.assertIn('<span class="dd">-v: 3</span>', cfg)
+        self.assertIn('<span class="da">+v: 4</span>', cfg)
+        self.assertIn('<span class="dh">@@', cfg)
+        self.assertNotIn("diff --git", cfg)
+        self.assertNotIn(">index ", cfg)
+        self.assertNotIn("--- a/app/config.yml", cfg)
+        self.assertNotIn("+++ b/app/config.yml", cfg)
+        # pure rename (no code change): the rename lines are the only record, so they stay
+        ren = self._diff_cell("alpha", "src/renamed.txt")
+        self.assertIn('<span class="dm">rename from a.txt</span>', ren)
+        self.assertIn('<span class="dm">rename to src/renamed.txt</span>', ren)
+        self.assertNotIn("diff --git", ren)
+        dele = self._diff_cell("alpha", "b.txt")
+        self.assertNotIn("deleted file mode", dele)
+        self.assertIn('<span class="dd">-bee</span>', dele)
+        # escaping of file names inside the diff
+        odd = self._diff_cell("alpha", "docs/na\ufffdve & <odd> name.md")
+        self.assertIn('<span class="da">+x</span>', odd)
+        # the no-file-changes row has an empty diff cell
+        nf = self.page[self.page.index('id="nofiles/alpha"'):]
+        nf = nf[nf.index('<details class="diff-col"'):nf.index('<details class="detail-col"')]
+        self.assertNotIn('<pre class="diff">', nf)
+
+    def test_diff_code_lines_unit(self):
+        diff = ("diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n ctx\n"
+                "--- removed line that looks like a header\n+++ added line that looks like a header\n"
+                "diff --git a/y b/y\nnew file mode 100644\nindex 0..3\nBinary files /dev/null and b/y differ\n")
+        self.assertEqual(gh.diff_code_lines(diff), [
+            ("h", "@@ -1,3 +1,3 @@"), ("c", " ctx"),
+            ("d", "--- removed line that looks like a header"),
+            ("a", "+++ added line that looks like a header"),
+            ("m", "new file mode 100644"), ("m", "Binary files /dev/null and b/y differ")])
+        self.assertEqual(gh.diff_code_lines(""), [])
+
+    def test_repo_diffs_two_git_calls(self):
+        calls = []
+        real = gh.run_git
+        def spy(repo, args):
+            calls.append(args[0])
+            return real(repo, args)
+        with mock.patch.object(gh, "run_git", side_effect=spy):
+            d = gh.repo_diffs(self.fx.alpha.path, "origin/hotfix/SG_19.17.1", "origin/" + TARGET)
+        self.assertEqual(calls, ["diff", "diff"])
+        a = self.by_name["alpha"]
+        self.assertEqual(set(d), {p for p, _ in a.files} | {"a.txt"})   # a.txt: old name of the rename
+        self.assertEqual(d["a.txt"], d["src/renamed.txt"])
+
+    def test_code_diff_failure_keeps_commits(self):
+        with self.assertRaises(gh.GitError):
+            gh.repo_diffs(self.fx.alpha.path, "origin/no-such-branch", "origin/" + TARGET)
+
     def test_output_file_written(self):
         with open(self.report.config.output_file, encoding="utf-8") as fh:
             self.assertEqual(fh.read(), self.page)
+
+
+class FallbackBaseTests(unittest.TestCase):
+    """FALLBACK_BASE_BRANCH = "master": used only when the target exists and nothing is lower."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fx = Fixture()
+        cls.report, cls.logs = run_report(cls.fx.repos, fallback="master")
+        cls.page = cls.report.html
+        cls.by_name = {r.name: r for r in cls.report.repos}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.fx.cleanup()
+
+    def test_fallback_used(self):
+        i = self.by_name["iota"]
+        self.assertEqual(i.state, gh.STATE_CHANGES)
+        self.assertEqual(i.base_branch, "origin/master")
+        self.assertTrue(i.selection.base_is_fallback)
+        self.assertEqual([c.hash for c in i.commits], [self.fx.iota_target_commit])
+        self.assertNotIn("iota on master", self.page)
+        sec = self.page[self.page.index('id="repo/iota"'):]
+        sec = sec[:sec.index("</details>")]
+        self.assertIn('<span class="tag tag-fallback">fallback base</span>', sec)
+        self.assertIn("<dt>Fallback base</dt>", sec)
+
+    def test_fallback_missing_keeps_error(self):
+        g = self.by_name["gamma"]
+        self.assertEqual(g.state, gh.STATE_ERROR)
+        self.assertEqual(g.reason, "No previous branch found for `SG` below `19.18.0`, and the fallback "
+                                   "base branch `origin/master` was not found on remote.")
+
+    def test_fallback_not_used_otherwise(self):
+        self.assertEqual(self.by_name["alpha"].base_branch, "origin/hotfix/SG_19.17.1")
+        self.assertFalse(self.by_name["alpha"].selection.base_is_fallback)
+        self.assertEqual(self.by_name["beta"].state, gh.STATE_NO_CHANGE)     # no target: no fallback
+        self.assertEqual(self.by_name["theta"].state, gh.STATE_ERROR)        # tie: no fallback
+        self.assertEqual(self.page.count('tag-fallback">fallback base'), 2)  # overview + iota header
+
+    def test_select_unit(self):
+        T = gh.parse_branch_name(TARGET)
+        s = gh.select_branches(["origin/master", "origin/" + TARGET], "origin", T, "master")
+        self.assertEqual((s.outcome, s.base_ref, s.base_is_fallback), ("ok", "origin/master", True))
+        s = gh.select_branches(["origin/master", "origin/release/SG_1.0", "origin/" + TARGET], "origin", T, "master")
+        self.assertEqual((s.base_ref, s.base_is_fallback), ("origin/release/SG_1.0", False))
+        s = gh.select_branches(["origin/master"], "origin", T, "master")
+        self.assertEqual(s.outcome, "no_target")
+        s = gh.select_branches(["upstream/master", "origin/" + TARGET], "origin", T, "master")
+        self.assertEqual(s.outcome, "no_base")
+        s = gh.select_branches(["origin/master", "origin/hotfix/SG_1.0", "origin/hotfix/SG_1.0.0",
+                                "origin/" + TARGET], "origin", T, "master")
+        self.assertEqual(s.outcome, "ok")   # 1.0 < 1.0.0, not a tie
+        s = gh.select_branches(["origin/master", "origin/hotfix/SG_1.0", "origin/hotfix/SG_01.0",
+                                "origin/" + TARGET], "origin", T, "master")
+        self.assertEqual(s.outcome, "tie")
+
+    def test_bad_fallback_config(self):
+        for bad in ("", " master", "origin master", "refs/heads/master", "a..b", 5):
+            with self.subTest(bad=bad), self.assertRaises(gh.ConfigError):
+                gh.generate_report(self.fx.repos, TARGET, "origin", "x.html", None, None, bad,
+                                   log=lambda s: None)
+
+
+class StatsPageTests(unittest.TestCase):
+    """The separate statistics page (STATS_OUTPUT_FILE)."""
+
+    def test_file_types(self):
+        cases = {
+            "src/UserController.java": "Controller", "OrderProcessor.java": "Processor",
+            "routes.js": "Route", "AppRouter.tsx": "Route", "application-config.yml": "Config",
+            "Configuration.java": "Config", "PaymentApi.java": "API", "APIClient.java": "API",
+            "UserBuilder.java": "Builder", "OrderRequestMapper.java": "Mapper", "UserVO.java": "VO",
+            "UserVo.java": "VO", "CreateUserRequest.java": "Request", "UserResponse.java": "Response",
+            "UserControllerTest.java": "Test", "test_api.py": "Test", "user.spec.ts": "Test",
+            "UserServiceIT.java": "Test", "README.md": "Other", ".gitignore": "Other",
+            "contest.py": "Other", "latest.json": "Other", "src/test/Helper.java": "Other",
+            # Properties, Util, Constant (by name)
+            "src/main/resources/application.properties": "Properties", "AppProps.java": "Properties",
+            "DateUtils.java": "Util", "StringUtil.java": "Util", "util.py": "Util",
+            "ErrorConstants.java": "Constant", "constants.ts": "Constant",
+            # folder groups, only when the name matches no type
+            "src/main/resources/db/schema.sql": "Resources", "src/test/resources/data.json": "Resources",
+            "routes/user.js": "Route", "web/routes/index.ts": "Route",
+            "templates/email.html": "Template", "src/main/resources/templates/mail.ftl": "Template",
+            "resources/routes/x.js": "Route",                       # innermost folder wins
+            "src/main/resources/UserMapper.xml": "Mapper",          # the name wins over the folder
+            "src/main/resources/application-config.yml": "Config",
+        }
+        for path, want in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(gh.file_type(path), want)
+
+    def _commit(self, h, name, msg, *paths):
+        return gh.Commit(h * 40, name, name.lower() + "@x", "2024-01-01T00:00:00+08:00", msg,
+                         [gh.FileChange("M", "", p) for p in paths])
+
+    def test_counts_and_grouping(self):
+        c1 = self._commit("1", "Ann", "Fix user API\n\nsecond line", "src/UserController.java", "src/UserVO.java")
+        c2 = self._commit("2", "Bob", "Rename field", "src/UserController.java")
+        c3 = self._commit("3", "Ann", "Tidy <tags>", "src/UserController.java", "README.md")
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        cfg = gh.load_config(tmp, TARGET, "origin", os.path.join(tmp, "index.html"), None,
+                             stats_output_file=os.path.join(tmp, "stats.html"))
+        r = gh.RepoReport("svc", tmp, state=gh.STATE_CHANGES)
+        r.selection = gh.BranchSelection(target_ref="origin/" + TARGET, base_ref="origin/hotfix/SG_19.17.1")
+        r.commits = [c3, c2, c1]
+        r.files, r.no_file_commits = gh.group_by_file(r.commits)
+        stats = {fs.path: fs for fs in gh.file_stats(r)}
+        uc = stats["src/UserController.java"]
+        self.assertEqual((uc.type, len(uc.commits), uc.users), ("Controller", 3, ["Ann", "Bob"]))
+        self.assertEqual((stats["src/UserVO.java"].type, len(stats["src/UserVO.java"].commits)), ("VO", 1))
+        self.assertEqual(stats["README.md"].type, "Other")
+        page = gh.render_stats_html(cfg, "now", [r])
+        rows = re.findall(r'<tr id="[^"]*"><td class="path"><a href="index.html#([^"]*)"[^>]*>([^<]*)</a></td>'
+                          r'<td class="num">(\d+)</td><td class="num"[^>]*>(\d+)</td>', page)
+        self.assertEqual(rows, [("file/svc/src/UserController.java", "src/UserController.java", "3", "2"),
+                                ("file/svc/src/UserVO.java", "src/UserVO.java", "1", "1"),
+                                ("file/svc/README.md", "README.md", "1", "1")])
+        # summary: only files changed by more than one user, linked to their row
+        summary = page[page.index('<section class="summary">'):page.index("</section>", page.index('<section class="summary">'))]
+        self.assertIn('<a href="#stats-file/svc/src/UserController.java">src/UserController.java</a></td>'
+                      '<td>Controller</td><td class="num">2</td><td class="num">3</td><td>Ann, Bob</td>', summary)
+        self.assertNotIn("UserVO.java", summary)
+        self.assertNotIn("README.md", summary)
+        self.assertIn('id="stats-file/svc/src/UserController.java"', page)
+        # groups appear in the requested order, Other last
+        self.assertLess(page.index(">Controller <"), page.index(">VO <"))
+        self.assertLess(page.index(">VO <"), page.index(">Other <"))
+        # commit messages: full, escaped, inside a collapsed list
+        self.assertIn('<details class="msgs"><summary>3 commits by Ann, Bob</summary>', page)
+        self.assertIn("Fix user API\n\nsecond line", page)
+        self.assertIn("Tidy &lt;tags&gt;", page)
+        self.assertNotIn("<tags>", page)
+
+    def test_written_with_report(self):
+        fx = Fixture()
+        self.addCleanup(fx.cleanup)
+        out_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out_dir)
+        out, stats_out = os.path.join(out_dir, "index.html"), os.path.join(out_dir, "stats.html")
+        rep = gh.generate_report(fx.repos, TARGET, "origin", out, None, None, None, stats_out,
+                                 log=lambda s: None)
+        with open(stats_out, encoding="utf-8") as fh:
+            page = fh.read()
+        self.assertEqual(page, rep.stats_html)
+        self.assertIn('href="stats.html"', rep.html)          # review page links to stats
+        self.assertIn('href="index.html"', page)              # and back
+        alpha = next(r for r in rep.repos if r.name == "alpha")
+        for path, entries in alpha.files:
+            fid = gh.esc(gh.anchor_id("file", "alpha", path))
+            m = re.search(r'href="index.html#' + re.escape(fid) + r'"[^>]*>[^<]*</a></td>'
+                          r'<td class="num">(\d+)</td><td class="num"[^>]*>(\d+)</td>', page)
+            self.assertIsNotNone(m, path)
+            self.assertEqual(int(m.group(1)), len(entries), path)
+            self.assertEqual(int(m.group(2)), len({c.author_name for c, _ in entries}), path)
+        self.assertIn(">Config <", page)                      # app/config.yml
+        # every repository with changes has a summary entry; alpha has one author per file
+        summary = page[page.index('<section class="summary">'):]
+        summary = summary[:summary.index("</section>")]
+        self.assertIn("alpha</a> <span class=\"muted\">(0 files)</span>", summary)
+        self.assertIn("No file was modified by more than one user.", summary)
+        for name in ("beta", "gamma", "zeta"):                # no-change / error repos listed
+            self.assertIn(f"<li><b>{name}</b>", page)
+
+    def test_stats_config(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        with self.assertRaises(gh.ConfigError):
+            gh.load_config(tmp, TARGET, "origin", "index.html", None, stats_output_file="index.html")
+        with self.assertRaises(gh.ConfigError):
+            gh.load_config(tmp, TARGET, "origin", "index.html", None, stats_output_file="")
+        self.assertIsNone(gh.load_config(tmp, TARGET, "origin", "index.html", None).stats_output_file)
 
 
 class LinkIntegrationTests(unittest.TestCase):
@@ -574,7 +976,7 @@ class LinkIntegrationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.fx.cleanup()
 
-    def render_with_remote(self, url, template=None):
+    def render_with_remote(self, url, template=None, bitbucket=None):
         real = gh.run_git
 
         def fake(repo, args):
@@ -582,11 +984,27 @@ class LinkIntegrationTests(unittest.TestCase):
                 return url + "\n"
             return real(repo, args)
         with mock.patch.object(gh, "run_git", side_effect=fake):
-            rep, _ = run_report(self.fx.repos, template=template)
+            rep, _ = run_report(self.fx.repos, template=template, bitbucket=bitbucket)
         return rep, extract(rep.html)
 
-    def check(self, url, expect_commit, expect_compare, template=None):
-        rep, ex = self.render_with_remote(url, template)
+    def check(self, url, expect_commit, expect_compare, template=None, bitbucket=None,
+              expect_file=None):
+        rep, ex = self.render_with_remote(url, template, bitbucket)
+        file_links = {l[1] for l in ex.links if "filelink" in l[0]}
+        alpha = next(r for r in rep.repos if r.name == "alpha")
+        if expect_file:
+            tc = alpha.target_commit
+            self.assertEqual(tc, git(self.fx.alpha.path, "rev-parse", "refs/remotes/origin/" + TARGET))
+            self.assertIn(expect_file(tc, "src/renamed.txt"), file_links)
+            self.assertIn(expect_file(tc, "app/config.yml"), file_links)
+            # deleted at target: no file link
+            self.assertFalse(any("b.txt" in u and "renamed" not in u for u in file_links), file_links)
+            # every file link is for a path that exists at the target commit
+            changed = [r for r in rep.repos if r.state == gh.STATE_CHANGES]
+            self.assertEqual(len(file_links), sum(len([p for p, _ in r.files if p in r.target_paths])
+                                                  for r in changed))
+        else:
+            self.assertEqual(file_links, set())
         h = self.fx.hashes
         commit_links = [l for l in ex.links if "hash" in l[0]]
         compare_links = [l for l in ex.links if "compare" in l[0]]
@@ -598,9 +1016,10 @@ class LinkIntegrationTests(unittest.TestCase):
         self.assertIn(expect_commit(h["c9"], None), hrefs)
         chrefs = {l[1] for l in compare_links}
         self.assertIn(expect_compare("hotfix/SG_19.17.1", "release/SG_19.18.0", "src/renamed.txt"), chrefs)
-        a = next(r for r in rep.repos if r.name == "alpha")
-        self.assertEqual(len(compare_links), len(a.files))
-        self.assertEqual(len(commit_links), sum(len(v) for _, v in a.files) + len(a.no_file_commits))
+        changed = [r for r in rep.repos if r.state == gh.STATE_CHANGES]
+        self.assertEqual(len(compare_links), sum(len(r.files) for r in changed))
+        self.assertEqual(len(commit_links), sum(sum(len(v) for _, v in r.files) + len(r.no_file_commits)
+                                                for r in changed))
         return ex
 
     def test_github(self):
@@ -612,20 +1031,23 @@ class LinkIntegrationTests(unittest.TestCase):
                     url,
                     lambda c, p: f"https://github.com/acme/alpha/commit/{c}" + (f"#diff-{gh._sha256(p)}" if p else ""),
                     lambda b, t, p: ("https://github.com/acme/alpha/compare/hotfix%2FSG_19.17.1..."
-                                     f"release%2FSG_19.18.0#diff-{sha}"))
+                                     f"release%2FSG_19.18.0#diff-{sha}"),
+                    expect_file=lambda tc, p: f"https://github.com/acme/alpha/blob/{tc}/{p}")
                 self.assertFalse(any("tok" in l[1] for l in ex.links))
 
     def test_gitlab(self):
         self.check("git@gitlab.com:grp/sub/alpha.git",
                    lambda c, p: f"https://gitlab.com/grp/sub/alpha/-/commit/{c}" + (f"#{gh._sha1(p)}" if p else ""),
                    lambda b, t, p: ("https://gitlab.com/grp/sub/alpha/-/compare/hotfix%2FSG_19.17.1..."
-                                    f"release%2FSG_19.18.0#{gh._sha1(p)}"))
+                                    f"release%2FSG_19.18.0#{gh._sha1(p)}"),
+                   expect_file=lambda tc, p: f"https://gitlab.com/grp/sub/alpha/-/blob/{tc}/{p}")
 
     def test_bitbucket(self):
         self.check("git@bitbucket.org:ws/alpha.git",
                    lambda c, p: f"https://bitbucket.org/ws/alpha/commits/{c}" + (f"#chg-{p}" if p else ""),
                    lambda b, t, p: ("https://bitbucket.org/ws/alpha/branches/compare/"
-                                    f"release%2FSG_19.18.0%0Dhotfix%2FSG_19.17.1#chg-{p}"))
+                                    f"release%2FSG_19.18.0%0Dhotfix%2FSG_19.17.1#chg-{p}"),
+                   expect_file=lambda tc, p: f"https://bitbucket.org/ws/alpha/src/{tc}/{p}")
 
     def test_azure(self):
         for url in ("git@ssh.dev.azure.com:v3/org/proj/alpha", "https://org@dev.azure.com/org/proj/_git/alpha"):
@@ -634,7 +1056,54 @@ class LinkIntegrationTests(unittest.TestCase):
                            lambda c, p: f"https://dev.azure.com/org/proj/_git/alpha/commit/{c}",
                            lambda b, t, p: ("https://dev.azure.com/org/proj/_git/alpha/branches?"
                                             "baseVersion=GBhotfix%2FSG_19.17.1&targetVersion=GBrelease%2FSG_19.18.0"
-                                            "&_a=files"))
+                                            "&_a=files"),
+                           expect_file=lambda tc, p: f"https://dev.azure.com/org/proj/_git/alpha?path=/{p}&version=GC{tc}")
+
+    def test_bitbucket_server_base_url(self):
+        base = "https://bitbucket.corp.example"
+        for url in ("ssh://git@bitbucket.corp.example:7999/proj/alpha.git",
+                    "https://u@bitbucket.corp.example/scm/proj/alpha.git"):
+            with self.subTest(url=url):
+                self.check(url,
+                           lambda c, p: f"{base}/projects/proj/repos/alpha/commits/{c}" + (f"#{p}" if p else ""),
+                           lambda b, t, p: (f"{base}/projects/proj/repos/alpha/compare/diff?"
+                                            "sourceBranch=refs%2Fheads%2Frelease%2FSG_19.18.0"
+                                            f"&targetBranch=refs%2Fheads%2Fhotfix%2FSG_19.17.1#{p}"),
+                           bitbucket=base,
+                           expect_file=lambda tc, p: f"{base}/projects/proj/repos/alpha/browse/{p}?at={tc}")
+
+    def test_bitbucket_server_compare_direction(self):
+        # sourceBranch = the release being reviewed (target), targetBranch = the base
+        lb = gh.make_link_builder("ssh://git@bb.corp.example:7999/proj/r.git", None,
+                                  "https://bb.corp.example")
+        url = lb.compare_url("hotfix/SG_19.17.1", "release/SG_19.18.0", "a.txt")
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        self.assertEqual(q["sourceBranch"], ["refs/heads/release/SG_19.18.0"])
+        self.assertEqual(q["targetBranch"], ["refs/heads/hotfix/SG_19.17.1"])
+
+    def test_bitbucket_server_context_path_and_personal_repo(self):
+        base = "https://git.corp.example/bitbucket/"
+        b = "https://git.corp.example/bitbucket/users/jane/repos/alpha"
+        self.check("https://git.corp.example/bitbucket/scm/~jane/alpha.git",
+                   lambda c, p: f"{b}/commits/{c}" + (f"#{p}" if p else ""),
+                   lambda bb, t, p: (f"{b}/compare/diff?sourceBranch=refs%2Fheads%2Frelease%2FSG_19.18.0"
+                                     f"&targetBranch=refs%2Fheads%2Fhotfix%2FSG_19.17.1#{p}"),
+                   bitbucket=base,
+                   expect_file=lambda tc, p: f"{b}/browse/{p}?at={tc}")
+
+    def test_bitbucket_cloud_base_url(self):
+        b = "https://bitbucket.org/ws/alpha"
+        # a remote on another host: BITBUCKET_BASE_URL decides where links go
+        self.check("git@mirror.corp.example:ws/alpha.git",
+                   lambda c, p: f"{b}/commits/{c}" + (f"#chg-{p}" if p else ""),
+                   lambda bb, t, p: (f"{b}/branches/compare/release%2FSG_19.18.0%0Dhotfix%2FSG_19.17.1#chg-{p}"),
+                   bitbucket="https://bitbucket.org",
+                   expect_file=lambda tc, p: f"{b}/src/{tc}/{p}")
+
+    def test_bitbucket_base_url_with_local_remote_gives_no_links(self):
+        rep, _ = run_report(self.fx.repos, bitbucket="https://bitbucket.corp.example")
+        self.assertEqual(extract(rep.html).links, [])
+        self.assertIn("BITBUCKET_BASE_URL is set, but the project and repository name", rep.html)
 
     def test_template_for_self_hosted(self):
         tpl = {"commit": "{base_url}/c/{commit}?p={path}#{path_sha256}",
@@ -644,6 +1113,15 @@ class LinkIntegrationTests(unittest.TestCase):
                    lambda b, t, p: ("https://git.corp.example/team/alpha/cmp/hotfix%2FSG_19.17.1.."
                                     f"release%2FSG_19.18.0?p={p}"),
                    template=tpl)
+
+    def test_template_file_link(self):
+        lb = gh.make_link_builder("git@git.corp.example:t/r.git",
+                                  {"commit": "{base_url}/c/{commit}", "compare": "{base_url}/x",
+                                   "file": "{base_url}/raw/{target_commit}/{path}"})
+        self.assertEqual(lb.file_url("abc123", "a b/c.txt"), "https://git.corp.example/t/r/raw/abc123/a%20b/c.txt")
+        lb = gh.make_link_builder("git@git.corp.example:t/r.git",
+                                  {"commit": "{base_url}/c/{commit}", "compare": "{base_url}/x"})
+        self.assertIsNone(lb.file_url("abc123", "a.txt"))
 
     def test_unknown_host_without_template_has_no_links(self):
         rep, ex = self.render_with_remote("git@git.corp.example:team/alpha.git")

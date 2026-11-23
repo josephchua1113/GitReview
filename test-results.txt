@@ -1,15 +1,29 @@
 test_closest_lower_across_release_and_hotfix (test_git_history.BranchSelectionUnitTests.test_closest_lower_across_release_and_hotfix) ... ok
 test_numeric_not_lexicographic (test_git_history.BranchSelectionUnitTests.test_numeric_not_lexicographic) ... ok
 test_other_remote_ignored (test_git_history.BranchSelectionUnitTests.test_other_remote_ignored) ... ok
+test_same_version_release_preferred (test_git_history.BranchSelectionUnitTests.test_same_version_release_preferred) ... ok
+test_unresolvable_ties (test_git_history.BranchSelectionUnitTests.test_unresolvable_ties) ... ok
+test_user_reported_set (test_git_history.BranchSelectionUnitTests.test_user_reported_set) ... ok
+test_bad_bitbucket_base_url (test_git_history.ConfigTests.test_bad_bitbucket_base_url) ... ok
 test_bad_template (test_git_history.ConfigTests.test_bad_template) ... ok
 test_country_and_version (test_git_history.ConfigTests.test_country_and_version) ... ok
 test_invalid_branch_names (test_git_history.ConfigTests.test_invalid_branch_names) ... ok
 test_main_reports_config_error (test_git_history.ConfigTests.test_main_reports_config_error) ... ok
 test_missing_folder (test_git_history.ConfigTests.test_missing_folder) ... ok
 test_version_ordering (test_git_history.ConfigTests.test_version_ordering) ... ok
+test_bad_fallback_config (test_git_history.FallbackBaseTests.test_bad_fallback_config) ... ok
+test_fallback_missing_keeps_error (test_git_history.FallbackBaseTests.test_fallback_missing_keeps_error) ... ok
+test_fallback_not_used_otherwise (test_git_history.FallbackBaseTests.test_fallback_not_used_otherwise) ... ok
+test_fallback_used (test_git_history.FallbackBaseTests.test_fallback_used) ... ok
+test_select_unit (test_git_history.FallbackBaseTests.test_select_unit) ... ok
+test_19_17_vs_19_17_0_picks_19_17_0 (test_git_history.IntegrationTests.test_19_17_vs_19_17_0_picks_19_17_0) ... ok
 test_base_is_closest_lower (test_git_history.IntegrationTests.test_base_is_closest_lower) ... ok
 test_candidates_listed_with_remote_prefix (test_git_history.IntegrationTests.test_candidates_listed_with_remote_prefix) ... ok
+test_code_diff_failure_keeps_commits (test_git_history.IntegrationTests.test_code_diff_failure_keeps_commits) ... ok
+test_code_diff_kinds (test_git_history.IntegrationTests.test_code_diff_kinds) ... ok
+test_code_diff_matches_git (test_git_history.IntegrationTests.test_code_diff_matches_git) ... ok
 test_content_exact (test_git_history.IntegrationTests.test_content_exact) ... ok
+test_diff_code_lines_unit (test_git_history.IntegrationTests.test_diff_code_lines_unit) ... ok
 test_discovery (test_git_history.IntegrationTests.test_discovery) ... ok
 test_fetch_failure_is_error_and_others_continue (test_git_history.IntegrationTests.test_fetch_failure_is_error_and_others_continue) ... ok
 test_file_and_repo_order (test_git_history.IntegrationTests.test_file_and_repo_order) ... ok
@@ -19,26 +33,40 @@ test_ignored_branches_logged (test_git_history.IntegrationTests.test_ignored_bra
 test_local_refs_untouched (test_git_history.IntegrationTests.test_local_refs_untouched) ... ok
 test_missing_target_no_change_no_fallback (test_git_history.IntegrationTests.test_missing_target_no_change_no_fallback) ... ok
 test_multiline_message_kept (test_git_history.IntegrationTests.test_multiline_message_kept) ... ok
+test_no_fallback_when_not_configured (test_git_history.IntegrationTests.test_no_fallback_when_not_configured) ... ok
 test_no_links_for_unknown_platform (test_git_history.IntegrationTests.test_no_links_for_unknown_platform) ... ok
 test_no_previous_branch (test_git_history.IntegrationTests.test_no_previous_branch) ... ok
 test_output_file_written (test_git_history.IntegrationTests.test_output_file_written) ... ok
+test_release_preferred_over_hotfix_with_same_version (test_git_history.IntegrationTests.test_release_preferred_over_hotfix_with_same_version) ... ok
+test_repo_diffs_two_git_calls (test_git_history.IntegrationTests.test_repo_diffs_two_git_calls) ... ok
 test_scope_only_base_to_target (test_git_history.IntegrationTests.test_scope_only_base_to_target) ... ok
 test_template_without_web_url_gives_no_links (test_git_history.IntegrationTests.test_template_without_web_url_gives_no_links) ... ok
-test_tie_is_error (test_git_history.IntegrationTests.test_tie_is_error) ... ok
+test_three_column_layout (test_git_history.IntegrationTests.test_three_column_layout) ... ok
 test_top_of_page (test_git_history.IntegrationTests.test_top_of_page) ... ok
+test_unresolvable_tie_is_error (test_git_history.IntegrationTests.test_unresolvable_tie_is_error) ... ok
 test_azure (test_git_history.LinkIntegrationTests.test_azure) ... ok
 test_bitbucket (test_git_history.LinkIntegrationTests.test_bitbucket) ... ok
+test_bitbucket_base_url_with_local_remote_gives_no_links (test_git_history.LinkIntegrationTests.test_bitbucket_base_url_with_local_remote_gives_no_links) ... ok
+test_bitbucket_cloud_base_url (test_git_history.LinkIntegrationTests.test_bitbucket_cloud_base_url) ... ok
+test_bitbucket_server_base_url (test_git_history.LinkIntegrationTests.test_bitbucket_server_base_url) ... ok
+test_bitbucket_server_compare_direction (test_git_history.LinkIntegrationTests.test_bitbucket_server_compare_direction) ... ok
+test_bitbucket_server_context_path_and_personal_repo (test_git_history.LinkIntegrationTests.test_bitbucket_server_context_path_and_personal_repo) ... ok
 test_github (test_git_history.LinkIntegrationTests.test_github) ... ok
 test_gitlab (test_git_history.LinkIntegrationTests.test_gitlab) ... ok
 test_path_encoding (test_git_history.LinkIntegrationTests.test_path_encoding) ... ok
+test_template_file_link (test_git_history.LinkIntegrationTests.test_template_file_link) ... ok
 test_template_for_self_hosted (test_git_history.LinkIntegrationTests.test_template_for_self_hosted) ... ok
 test_unknown_host_without_template_has_no_links (test_git_history.LinkIntegrationTests.test_unknown_host_without_template_has_no_links) ... ok
 test_garbage_raises (test_git_history.ParseLogTests.test_garbage_raises) ... ok
 test_tricky_tokens (test_git_history.ParseLogTests.test_tricky_tokens) ... ok
 test_conversions (test_git_history.RemoteUrlTests.test_conversions) ... ok
 test_platform_only_for_clear_hosts (test_git_history.RemoteUrlTests.test_platform_only_for_clear_hosts) ... ok
+test_counts_and_grouping (test_git_history.StatsPageTests.test_counts_and_grouping) ... ok
+test_file_types (test_git_history.StatsPageTests.test_file_types) ... ok
+test_stats_config (test_git_history.StatsPageTests.test_stats_config) ... ok
+test_written_with_report (test_git_history.StatsPageTests.test_written_with_report) ... ok
 
 ----------------------------------------------------------------------
-Ran 39 tests in 2.257s
+Ran 67 tests in 9.307s
 
 OK
