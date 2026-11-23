@@ -11,10 +11,11 @@ the script works in  <base-dir>/<PROJECT_KEY>/<repo-slug>  (one folder per proje
   new repo       ->  git init, git remote add origin <URL>, git fetch
   existing repo  ->  git fetch
 
-Parameters (CLI flag  ->  environment variable fallback):
+Parameters: set them in the CONFIGURATION block below. Each can also be
+overridden by a CLI flag or environment variable (flag > env var > code):
   --url        BITBUCKET_URL        Base URL, e.g. https://bitbucket.example.com
   --token      BITBUCKET_TOKEN      HTTP access token / app password
-  --base-dir   BITBUCKET_BASE_DIR   Where repos are written (default: ./bitbucket)
+  --base-dir   BITBUCKET_BASE_DIR   Where project folders are written
   --projects   BITBUCKET_PROJECTS   Filter list: PROJ or PROJ/repo-slug
                                     (comma or space separated; empty = everything)
 
@@ -40,6 +41,30 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
+
+# =========================================================================== #
+#  CONFIGURATION - edit these four values                                     #
+# =========================================================================== #
+# 1. Bitbucket URL
+BITBUCKET_URL = "https://bitbucket.example.com"
+
+# 2. Bitbucket token (HTTP access token). Leave "" to read it from the
+#    BITBUCKET_TOKEN environment variable instead of storing it in this file.
+BITBUCKET_TOKEN = ""
+
+# 3. Base directory - each project gets its own folder under it
+BASE_DIR = "~/bitbucket"
+
+# 4. Project repos to sync. "PROJ" = every repo in that project,
+#    "PROJ/repo-slug" = one repo. Empty list [] = everything the token can see.
+PROJECT_REPOS = [
+    # "PLAT",
+    # "CORE/api-gateway",
+]
+# =========================================================================== #
+# Command-line flags (--url, --token, --base-dir, --projects) and the matching
+# environment variables still work and override the values above.
+# =========================================================================== #
 
 USER_AGENT = "bitbucket-sync/1.0"
 
@@ -348,13 +373,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "  BITBUCKET_PROJECTS=PLAT,CORE %(prog)s\n"
         ),
     )
-    ap.add_argument("--url", default=os.environ.get("BITBUCKET_URL"),
+    ap.add_argument("--url", default=os.environ.get("BITBUCKET_URL") or BITBUCKET_URL or None,
                     help="Bitbucket base URL [env BITBUCKET_URL]")
-    ap.add_argument("--token", default=os.environ.get("BITBUCKET_TOKEN"),
+    ap.add_argument("--token", default=os.environ.get("BITBUCKET_TOKEN") or BITBUCKET_TOKEN or None,
                     help="Access token / app password [env BITBUCKET_TOKEN]. "
                          "Prefer the env var so the token stays out of shell history.")
-    ap.add_argument("--base-dir", default=os.environ.get("BITBUCKET_BASE_DIR", "./bitbucket"),
-                    help="Directory for project folders [env BITBUCKET_BASE_DIR, default ./bitbucket]")
+    ap.add_argument("--base-dir", default=os.environ.get("BITBUCKET_BASE_DIR") or BASE_DIR or "./bitbucket",
+                    help="Directory for project folders [env BITBUCKET_BASE_DIR, default: BASE_DIR in code]")
     ap.add_argument("--projects", nargs="*", default=None,
                     help="Projects or repos to sync: PROJ or PROJ/repo. Empty = all "
                          "[env BITBUCKET_PROJECTS, comma separated]")
@@ -379,14 +404,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = ap.parse_args(argv)
 
     if args.projects is None:
-        args.projects = split_list([os.environ.get("BITBUCKET_PROJECTS", "")])
+        env_projects = os.environ.get("BITBUCKET_PROJECTS")
+        args.projects = split_list([env_projects]) if env_projects is not None else split_list(PROJECT_REPOS)
     else:
         args.projects = split_list(args.projects)
 
-    missing = [n for n, v in (("--url / BITBUCKET_URL", args.url),
-                              ("--token / BITBUCKET_TOKEN", args.token)) if not v]
+    missing = [n for n, v in (("BITBUCKET_URL", args.url),
+                              ("BITBUCKET_TOKEN", args.token)) if not v]
     if missing:
-        ap.error("missing required setting(s): " + ", ".join(missing))
+        ap.error("missing required setting(s): " + ", ".join(missing)
+                 + " - set it in the CONFIGURATION block, as an env var, or with a CLI flag")
     return args
 
 
