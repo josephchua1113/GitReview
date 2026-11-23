@@ -761,6 +761,7 @@ class RepoReport:
     links: Optional[LinkBuilder] = None
     target_commit: Optional[str] = None                 # hash the target branch points to
     target_paths: frozenset = frozenset()               # paths that exist in target_commit
+    diffs: Dict[str, Tuple[str, str]] = dataclasses.field(default_factory=dict)  # path -> (diff, error)
 
     @property
     def target_branch(self) -> Optional[str]:
@@ -769,6 +770,36 @@ class RepoReport:
     @property
     def base_branch(self) -> Optional[str]:
         return self.selection.base_ref if self.selection else None
+
+
+def git_diff_args(base_ref: str, target_ref: str, paths: Sequence[str]) -> List[str]:
+    """`git diff base...target -- <paths>`: the file's code changes on the target since
+    it branched from the base (diff from the merge base to the target), which is the
+    same scope as `git log base..target`. Renamed files include their old paths so
+    the diff shows the rename. --literal-pathspecs: paths are never patterns."""
+    return [
+        "--literal-pathspecs", "diff",
+        f"refs/remotes/{base_ref}...refs/remotes/{target_ref}",
+        "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames",
+        "--src-prefix=a/", "--dst-prefix=b/",
+        "--", *paths,
+    ]
+
+
+def file_diff(repo: str, base_ref: str, target_ref: str, path: str,
+              old_paths: Sequence[str]) -> Tuple[str, str]:
+    """(diff text, error text) for one file. A failing diff is reported for that file
+    only; it doesn't stop the rest of the repository."""
+    paths = [path] + sorted(set(p for p in old_paths if p != path))
+    if any("\ufffd" in p for p in paths):
+        # The name was not valid UTF-8 and was shown with replacement characters, so
+        # it no longer matches the real file name and can't be passed back to git.
+        return "", ("Code diff not shown: this file name is not valid UTF-8, so it can't be "
+                    "passed back to git. Use the Compare link or run git diff locally.")
+    try:
+        return run_git(repo, git_diff_args(base_ref, target_ref, paths)), ""
+    except GitError as exc:
+        return "", str(exc)
 
 
 def group_by_file(commits: Sequence[Commit]):
@@ -835,6 +866,9 @@ def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoRepo
             listing = run_git(rep.path, ["ls-tree", "-r", "-z", "--name-only", "--full-tree",
                                          rep.target_commit])
             rep.target_paths = frozenset(p for p in listing.split("\x00") if p)
+        for path, entries in rep.files:
+            rep.diffs[path] = file_diff(rep.path, sel.base_ref, sel.target_ref, path,
+                                        [ch.old_path for _, ch in entries if ch.old_path])
         rep.state = STATE_CHANGES
         return rep
     except (GitError, LogParseError, OSError) as exc:
@@ -970,6 +1004,7 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
     w('<button type="button" id="expand-all">Expand all</button>'
       '<button type="button" id="collapse-all">Collapse all</button>'
       '<button type="button" id="clear-filters">Clear filters</button>'
+      '<button type="button" id="toggle-diff" aria-pressed="false">Hide code diff column</button>'
       '<button type="button" id="toggle-details" aria-pressed="false">Hide changes column</button>\n')
     w('<span id="filter-state" class="filter-state" aria-live="polite"></span>\n')
     w("</div>\n<main>\n")
@@ -1073,10 +1108,12 @@ def _render_repo_changes(w, r: RepoReport, remote: str):
 
     base = r.base_branch[len(remote) + 1:]        # branch names without "<remote>/"
     target = r.target_branch[len(remote) + 1:]
-    # Two columns per file: column 1 = file path (with Compare link and anchor),
-    # column 2 = that file's changes (status, message, date, commit, user), which
-    # can be collapsed per file or for the whole page.
+    # Three columns per file: column 1 = file path (with Compare/File links and
+    # anchor), column 2 = the file's code diff (git diff base...target), column 3 =
+    # the file's commits (status, message, date, commit, user). Columns 2 and 3 can
+    # be collapsed per file or for the whole page.
     w('<div class="files">\n<div class="files-head"><div>File</div>'
+      f'<div class="diff-label">Code diff: <code>{esc(r.base_branch)}...{esc(r.target_branch)}</code></div>'
       '<div class="detail-label">Changes: status, commit message, date, commit id, user</div></div>\n')
     for path, entries in r.files:
         fid = anchor_id("file", r.name, path)
@@ -1102,11 +1139,70 @@ def _render_file_row(w, r: RepoReport, fid: str, label: str, path: str, compare:
     w(f'<div class="file-col"><div class="file-col-inner">{label}'
       f'<div class="file-links">{compare}'
       f'<a class="anchor" href="#{esc(fid)}" title="Link to this file">#</a></div></div></div>\n')
+    w('<details class="diff-col" open><summary class="diff-head">Code diff</summary>\n')
+    if path:
+        diff, err = r.diffs.get(path, ("", ""))
+        if err:
+            w(f'<p class="diff-error">{esc(err)}</p>\n')
+        elif diff_code_lines(diff):
+            w(f'<pre class="diff">{_render_diff(diff_code_lines(diff))}</pre>\n')
+        else:
+            w('<p class="diff-empty">git diff shows no difference for this file between the '
+              'merge base and the target branch.</p>\n')
+    w("</details>\n")
     w('<details class="detail-col" open><summary class="detail-head">Changes</summary>\n'
       '<ol class="entries">\n')
     for commit, ch in entries:
         _render_entry(w, r, commit, ch)
     w("</ol>\n</details>\n</div>\n")
+
+
+_DIFF_HEADER_SKIP = ("diff --git ", "index ", "--- ", "+++ ")
+
+
+def diff_code_lines(diff: str) -> List[Tuple[str, str]]:
+    """(kind, line) pairs for the code-diff column: the code changes only.
+
+    git diff prints a header for each file (diff --git, index, ---, +++, and lines such
+    as "new file mode" or "rename from"). The header is left out, and every line
+    from the first @@ hunk header on is kept unchanged. When a file has no hunks at
+    all (a pure rename, a mode change or a binary file), its header lines other than
+    diff --git / index / --- / +++ are kept, because they are then the only record of
+    the change, e.g. "rename from a.txt" or "Binary files ... differ".
+    kind: "h" hunk header, "a" added, "d" removed, "c" context, "m" header info.
+    """
+    out: List[Tuple[str, str]] = []
+    header: List[str] = []
+    in_hunk = False
+    has_hunk = False
+
+    def flush_header():
+        if not has_hunk:
+            out.extend(("m", h) for h in header if not h.startswith(_DIFF_HEADER_SKIP))
+
+    for line in diff.rstrip("\n").split("\n") if diff else []:
+        if line.startswith("diff --git "):
+            flush_header()
+            header, in_hunk, has_hunk = [line], False, False
+        elif line.startswith("@@"):
+            in_hunk = has_hunk = True
+            out.append(("h", line))
+        elif not in_hunk:
+            header.append(line)
+        elif line.startswith("+"):
+            out.append(("a", line))
+        elif line.startswith("-"):
+            out.append(("d", line))
+        else:
+            out.append(("c", line))
+    flush_header()
+    return out
+
+
+def _render_diff(lines: Sequence[Tuple[str, str]]) -> str:
+    # Each line is its own block-level span, so no newline characters between them
+    # (a newline inside <pre> would add an empty line).
+    return "".join(f'<span class="d{k}">{esc(line)}</span>' for k, line in lines)
 
 
 def _render_entry(w, r: RepoReport, c: Commit, ch: Optional[FileChange]):
@@ -1192,10 +1288,10 @@ details.repo-no_change>.repo-head{background-color:#fbfbfc;font-weight:500;color
 .note{background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:6px 10px}
 .note-small{color:var(--muted);font-size:12px;margin:2px 0 8px}
 .files{border:1px solid var(--line);border-radius:6px;margin:8px 0;background:#fff}
-.files-head,.file{display:grid;grid-template-columns:minmax(220px,34%) minmax(0,1fr)}
+.files-head,.file{display:grid;grid-template-columns:minmax(180px,20%) minmax(0,1.35fr) minmax(0,1fr)}
 .files-head{background:var(--panel);font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)}
 .files-head>div{padding:4px 10px}
-.files-head>div:first-child{border-right:1px solid var(--line)}
+.files-head>div:first-child,.files-head>.diff-label{border-right:1px solid var(--line)}
 .file{border-top:1px solid var(--line)}
 .files-head+.file{border-top:0}
 .file-col{background:var(--panel);border-right:1px solid var(--line);padding:8px 10px}
@@ -1205,15 +1301,27 @@ details.repo-no_change>.repo-head{background-color:#fbfbfc;font-weight:500;color
 .file-links{margin-top:2px;font-size:12px}
 .file-links .anchor{margin-left:8px}
 .file-links .filelink{margin-left:10px}
-.detail-col>summary.detail-head{padding:3px 10px;font-size:12px;color:var(--muted);border-bottom:1px solid #eef1f4}
-.detail-col:not([open])>summary.detail-head{border-bottom:0}
+.diff-col{min-width:0;border-right:1px solid var(--line)}
+.detail-col{min-width:0}
+.detail-col>summary.detail-head,.diff-col>summary.diff-head{padding:3px 10px;font-size:12px;color:var(--muted);border-bottom:1px solid #eef1f4}
+.detail-col:not([open])>summary.detail-head,.diff-col:not([open])>summary.diff-head{border-bottom:0}
+pre.diff{margin:0;padding:6px 0;font-size:12px;line-height:1.4;max-height:600px;overflow:auto;background:#fff}
+pre.diff span{display:block;padding:0 10px;white-space:pre;min-width:max-content}
+pre.diff .da{background:#e6ffec}pre.diff .dd{background:#ffebe9}
+pre.diff .dh{background:#ddf4ff;color:#0550ae}pre.diff .dm{color:var(--muted);font-style:italic}
+.diff-error{color:#82071e;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;margin:6px 10px}
+.diff-empty{color:var(--muted);font-size:12px;margin:6px 10px}
+body.diff-hidden .diff-col,body.diff-hidden .diff-label{display:none}
 body.details-hidden .detail-col,body.details-hidden .detail-label{display:none}
-body.details-hidden .files-head,body.details-hidden .file{grid-template-columns:1fr}
-body.details-hidden .file-col,body.details-hidden .files-head>div:first-child{border-right:0}
-body.details-hidden .file-col{padding:4px 10px}
-body.details-hidden .file-col-inner{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline}
-body.details-hidden .file-links{margin-top:0}
-@media (max-width:800px){.files-head,.file{grid-template-columns:1fr}.file-col,.files-head>div:first-child{border-right:0}.files-head .detail-label{display:none}}
+body.diff-hidden .files-head,body.diff-hidden .file{grid-template-columns:minmax(220px,34%) minmax(0,1fr)}
+body.details-hidden .files-head,body.details-hidden .file{grid-template-columns:minmax(180px,22%) minmax(0,1fr)}
+body.details-hidden .diff-col,body.details-hidden .files-head>.diff-label{border-right:0}
+body.diff-hidden.details-hidden .files-head,body.diff-hidden.details-hidden .file{grid-template-columns:1fr}
+body.diff-hidden.details-hidden .file-col,body.diff-hidden.details-hidden .files-head>div:first-child{border-right:0}
+body.diff-hidden.details-hidden .file-col{padding:4px 10px}
+body.diff-hidden.details-hidden .file-col-inner{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline}
+body.diff-hidden.details-hidden .file-links{margin-top:0}
+@media (max-width:900px){.files-head,.file,body.diff-hidden .file,body.details-hidden .file{grid-template-columns:1fr}.file-col,.diff-col,.files-head>div{border-right:0!important}.files-head .detail-label,.files-head .diff-label{display:none}}
 .entries{list-style:none;margin:0;padding:0}
 .entry{padding:8px 10px;border-top:1px solid #eef1f4}
 .entry:first-child{border-top:0}
@@ -1233,9 +1341,12 @@ span.hash{color:var(--fg)}
 @media print{
  .toolbar,.anchor,.copy{display:none!important}
  .repo-head,.file-col-inner{position:static}
- body.details-hidden .detail-col{display:block!important}
- body.details-hidden .files-head,body.details-hidden .file{grid-template-columns:minmax(160px,30%) minmax(0,1fr)}
- .detail-col>summary.detail-head{display:none}
+ body.details-hidden .detail-col,body.diff-hidden .diff-col{display:block!important}
+ body.diff-hidden .diff-label,body.details-hidden .detail-label{display:block!important}
+ .files-head,.file,body .file,body .files-head{grid-template-columns:minmax(120px,18%) minmax(0,1.35fr) minmax(0,1fr)!important}
+ .detail-col>summary.detail-head,.diff-col>summary.diff-head{display:none}
+ pre.diff{max-height:none;overflow:visible}
+ pre.diff span{white-space:pre-wrap;min-width:0;word-break:break-all}
  .filtered{display:revert!important}
  .no-match{display:none!important}
  details.repo,.file{break-inside:auto}
@@ -1291,14 +1402,18 @@ JS = r"""
   document.getElementById('clear-filters').addEventListener('click',function(){
     search.value=''; boxes.forEach(function(b){b.checked=true;}); apply();
   });
-  function setAll(open){q('details.repo,details.detail-col').forEach(function(d){d.open=open;});}
-  var tgl=document.getElementById('toggle-details');
-  tgl.addEventListener('click',function(){
-    var hidden=document.body.classList.toggle('details-hidden');
-    tgl.textContent=hidden?'Show changes column':'Hide changes column';
-    tgl.setAttribute('aria-pressed',hidden?'true':'false');
-    setHeights();
-  });
+  function setAll(open){q('details.repo,details.detail-col,details.diff-col').forEach(function(d){d.open=open;});}
+  function columnToggle(id,cls,name){
+    var b=document.getElementById(id);
+    b.addEventListener('click',function(){
+      var hidden=document.body.classList.toggle(cls);
+      b.textContent=(hidden?'Show ':'Hide ')+name+' column';
+      b.setAttribute('aria-pressed',hidden?'true':'false');
+      setHeights();
+    });
+  }
+  columnToggle('toggle-diff','diff-hidden','code diff');
+  columnToggle('toggle-details','details-hidden','changes');
   document.getElementById('expand-all').addEventListener('click',function(){setAll(true);});
   document.getElementById('collapse-all').addEventListener('click',function(){setAll(false);});
 
