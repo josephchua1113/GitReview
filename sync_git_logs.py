@@ -69,9 +69,16 @@ def main():
         url = re.sub(r"://[^@/]+@", "://", clone)          # drop username from URL
         repo_dir = os.path.join(BASE_DIR, project, slug + ".git")
 
-        # Step 2: init + add remote (first run only)
-        if not os.path.isdir(repo_dir):
-            git("init", "--bare", "-q", repo_dir)
+        # Step 2: init + add remote (also repairs a half-created folder)
+        if not os.path.isfile(os.path.join(repo_dir, "HEAD")):
+            code, out = git("init", "--bare", "-q", repo_dir)
+            if code != 0:
+                failed += 1
+                log(f"FAILED  {name} : init failed: {out}")
+                continue
+        if git("-C", repo_dir, "remote", "get-url", "origin")[0] == 0:
+            git("-C", repo_dir, "remote", "set-url", "origin", url)
+        else:
             git("-C", repo_dir, "remote", "add", "origin", url)
 
         # Step 3: fetch history only (commits + tags, no file contents)
