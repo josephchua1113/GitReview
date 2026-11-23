@@ -23,6 +23,7 @@ REMOTE_NAME       = "origin"                # remote to read branches from
 OUTPUT_FILE       = "index.html"            # generated HTML page
 BITBUCKET_BASE_URL = None                   # Bitbucket web address for links, e.g. "https://bitbucket.mycompany.com"
 FALLBACK_BASE_BRANCH = "master"             # base used when no lower release/hotfix exists (None = no fallback)
+STATS_OUTPUT_FILE = "stats.html"            # separate per-file statistics page (None = don't create it)
 DIFF_URL_TEMPLATE = None                    # only needed for self-hosted / unrecognised git hosts
 #
 # BITBUCKET_BASE_URL: set this when your repositories are on Bitbucket. Every link
@@ -142,10 +143,12 @@ class Config:
     diff_url_template: Optional[Dict[str, str]]
     bitbucket_base_url: Optional[str] = None
     fallback_base_branch: Optional[str] = None
+    stats_output_file: Optional[str] = None
 
 
 def load_config(repos_folder, target_branch, remote_name, output_file,
-                diff_url_template, bitbucket_base_url=None, fallback_base_branch=None) -> Config:
+                diff_url_template, bitbucket_base_url=None, fallback_base_branch=None,
+                stats_output_file=None) -> Config:
     """Validate all inputs. Raises ConfigError with a clear message."""
     if not isinstance(target_branch, str) or parse_branch_name(target_branch) is None:
         raise ConfigError(
@@ -173,8 +176,12 @@ def load_config(repos_folder, target_branch, remote_name, output_file,
         raise ConfigError(
             f"FALLBACK_BASE_BRANCH {fallback_base_branch!r} must be None or a branch name "
             "without the remote prefix, such as 'master'.")
+    if stats_output_file is not None and (not isinstance(stats_output_file, str) or not stats_output_file):
+        raise ConfigError("STATS_OUTPUT_FILE must be None or a non-empty path.")
+    if stats_output_file and os.path.abspath(stats_output_file) == os.path.abspath(output_file):
+        raise ConfigError("STATS_OUTPUT_FILE must be a different file from OUTPUT_FILE.")
     return Config(os.path.abspath(repos_folder), parse_branch_name(target_branch),
-                  remote_name, output_file, template, bb, fallback_base_branch)
+                  remote_name, output_file, template, bb, fallback_base_branch, stats_output_file)
 
 
 def _validate_bitbucket_base_url(url) -> Optional[str]:
@@ -772,34 +779,55 @@ class RepoReport:
         return self.selection.base_ref if self.selection else None
 
 
-def git_diff_args(base_ref: str, target_ref: str, paths: Sequence[str]) -> List[str]:
-    """`git diff base...target -- <paths>`: the file's code changes on the target since
-    it branched from the base (diff from the merge base to the target), which is the
-    same scope as `git log base..target`. Renamed files include their old paths so
-    the diff shows the rename. --literal-pathspecs: paths are never patterns."""
+def git_diff_args(base_ref: str, target_ref: str, *extra: str) -> List[str]:
+    """`git diff base...target`: the code changes on the target since it branched from
+    the base (diff from the merge base to the target), the same scope as
+    `git log base..target`. One call covers every file of the repository."""
     return [
-        "--literal-pathspecs", "diff",
-        f"refs/remotes/{base_ref}...refs/remotes/{target_ref}",
+        "diff", f"refs/remotes/{base_ref}...refs/remotes/{target_ref}",
         "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames",
-        "--src-prefix=a/", "--dst-prefix=b/",
-        "--", *paths,
+        "--src-prefix=a/", "--dst-prefix=b/", *extra, "--",
     ]
 
 
-def file_diff(repo: str, base_ref: str, target_ref: str, path: str,
-              old_paths: Sequence[str]) -> Tuple[str, str]:
-    """(diff text, error text) for one file. A failing diff is reported for that file
-    only; it doesn't stop the rest of the repository."""
-    paths = [path] + sorted(set(p for p in old_paths if p != path))
-    if any("\ufffd" in p for p in paths):
-        # The name was not valid UTF-8 and was shown with replacement characters, so
-        # it no longer matches the real file name and can't be passed back to git.
-        return "", ("Code diff not shown: this file name is not valid UTF-8, so it can't be "
-                    "passed back to git. Use the Compare link or run git diff locally.")
-    try:
-        return run_git(repo, git_diff_args(base_ref, target_ref, paths)), ""
-    except GitError as exc:
-        return "", str(exc)
+def repo_diffs(repo: str, base_ref: str, target_ref: str) -> Dict[str, str]:
+    """Per-file diff text for the whole range, from two git calls (instead of one per
+    file): `--name-status -z` names each file exactly, and the patch output has one
+    section per file in the same order, each starting with a "diff --git " line (a
+    line inside a hunk always starts with " ", "+", "-" or "\\", so it can't be
+    mistaken for a section start). Keys: the new path, and for a rename or copy also
+    the old path, so both rows of a renamed file show the rename."""
+    names = run_git(repo, git_diff_args(base_ref, target_ref, "--name-status", "-z"))
+    tokens = [t for t in names.split("\x00")]
+    entries: List[List[str]] = []
+    i = 0
+    while i < len(tokens):
+        st = tokens[i]
+        if not st:
+            i += 1
+            continue
+        if st[0] in "RC":
+            entries.append([tokens[i + 2], tokens[i + 1]])
+            i += 3
+        else:
+            entries.append([tokens[i + 1]])
+            i += 2
+    patch = run_git(repo, git_diff_args(base_ref, target_ref, "-p"))
+    sections: List[List[str]] = []
+    for line in patch.split("\n"):
+        if line.startswith("diff --git "):
+            sections.append([])
+        if sections:
+            sections[-1].append(line)
+    if len(sections) != len(entries):
+        raise LogParseError(f"git diff listed {len(entries)} files but printed "
+                            f"{len(sections)} file sections")
+    out: Dict[str, str] = {}
+    for paths, sec in zip(entries, sections):
+        text = "\n".join(sec).rstrip("\n") + "\n"
+        for pth in paths:
+            out[pth] = out.get(pth, "") + text
+    return out
 
 
 def group_by_file(commits: Sequence[Commit]):
@@ -866,9 +894,14 @@ def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoRepo
             listing = run_git(rep.path, ["ls-tree", "-r", "-z", "--name-only", "--full-tree",
                                          rep.target_commit])
             rep.target_paths = frozenset(p for p in listing.split("\x00") if p)
-        for path, entries in rep.files:
-            rep.diffs[path] = file_diff(rep.path, sel.base_ref, sel.target_ref, path,
-                                        [ch.old_path for _, ch in entries if ch.old_path])
+        try:
+            all_diffs = repo_diffs(rep.path, sel.base_ref, sel.target_ref)
+            for path, _ in rep.files:
+                rep.diffs[path] = (all_diffs.get(path, ""), "")
+        except (GitError, LogParseError) as exc:
+            # the commit list is still shown; only the code diff column reports the error
+            for path, _ in rep.files:
+                rep.diffs[path] = ("", f"Code diff not available: {exc}")
         rep.state = STATE_CHANGES
         return rep
     except (GitError, LogParseError, OSError) as exc:
@@ -892,15 +925,16 @@ class Report:
     repos: List[RepoReport]
     skipped: List[str]
     html: str
+    stats_html: Optional[str] = None
 
 
 def generate_report(repos_folder, target_branch, remote_name, output_file, diff_url_template,
-                    bitbucket_base_url=None, fallback_base_branch=None, *,
+                    bitbucket_base_url=None, fallback_base_branch=None, stats_output_file=None, *,
                     log: Callable[[str], None] = print,
                     now: Optional[_dt.datetime] = None) -> Report:
     """Build the review page. Raises ConfigError for invalid inputs, before any git call."""
     cfg = load_config(repos_folder, target_branch, remote_name, output_file, diff_url_template,
-                      bitbucket_base_url, fallback_base_branch)
+                      bitbucket_base_url, fallback_base_branch, stats_output_file)
     generated = (now or _dt.datetime.now().astimezone()).isoformat(timespec="seconds")
 
     log(f"Target branch {cfg.target.name}: country {cfg.target.country}, "
@@ -922,7 +956,13 @@ def generate_report(repos_folder, target_branch, remote_name, output_file, diff_
     with open(cfg.output_file, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(page)
     log(f"Wrote {os.path.abspath(cfg.output_file)}")
-    return Report(cfg, generated, reports, skipped, page)
+    stats = None
+    if cfg.stats_output_file:
+        stats = render_stats_html(cfg, generated, reports)
+        with open(cfg.stats_output_file, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(stats)
+        log(f"Wrote {os.path.abspath(cfg.stats_output_file)}")
+    return Report(cfg, generated, reports, skipped, page, stats)
 
 
 # --------------------------------------------------------------------------
@@ -967,6 +1007,9 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
     # ---- top: page facts ------------------------------------------------
     w('<header class="page-head">\n')
     w(f"<h1>Release review: <code>{esc(cfg.target.name)}</code></h1>\n")
+    if cfg.stats_output_file:
+        w(f'<p class="pagelink"><a href="{esc(_rel_href(cfg.output_file, cfg.stats_output_file))}">'
+          "Per-file statistics page →</a></p>\n")
     w('<dl class="facts">\n')
     for k, v in (("Generated", generated), ("REPOS_FOLDER", cfg.repos_folder),
                  ("TARGET_BRANCH", cfg.target.name), ("Country", cfg.target.country),
@@ -1258,6 +1301,7 @@ h1{font-size:20px;margin:0 0 10px}
 .status-filter label{white-space:nowrap;cursor:pointer}
 .toolbar button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
 .filter-state{color:var(--muted);font-size:12px}
+.pagelink{margin:0 0 10px}
 main{padding:12px 20px 40px}
 .group{margin-bottom:28px}
 .group-title{font-size:16px;margin:8px 0;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
@@ -1446,11 +1490,227 @@ JS = r"""
 })();
 """
 
+# --------------------------------------------------------------------------
+# Statistics page (STATS_OUTPUT_FILE)
+# --------------------------------------------------------------------------
+#
+# A separate page with, per repository, every file changed in base..target and:
+#   - how many commits changed the file (commits listed under it on the review page)
+#   - how many different users (author names, %an) made those commits
+#   - a collapsible list of those commits' messages
+# Files are grouped by a type read from the file name (see file_type below).
+# Merge commits with no file changes are not counted, as they change no file.
+
+FILE_TYPES = ["Controller", "Processor", "Route", "Config", "API", "Builder", "Mapper",
+              "VO", "Request", "Response", "Test"]
+OTHER_TYPE = "Other"
+# words in a file name that count as each type (compared case-insensitively)
+_TYPE_WORDS = {
+    "Controller": ("controller", "controllers"),
+    "Processor": ("processor", "processors"),
+    "Route": ("route", "routes", "router", "routing"),
+    "Config": ("config", "configs", "configuration", "configurations"),
+    "API": ("api", "apis"),
+    "Builder": ("builder", "builders"),
+    "Mapper": ("mapper", "mappers"),
+    "VO": ("vo", "vos"),
+    "Request": ("request", "requests"),
+    "Response": ("response", "responses"),
+    "Test": ("test", "tests", "spec", "specs"),   # decided separately, see file_type
+}
+_WORD_TO_TYPE = {word: t for t, words in _TYPE_WORDS.items() for word in words}
+
+
+def _name_words(file_name: str) -> List[str]:
+    """Words of a file name: split on . _ - and spaces, and at camelCase boundaries,
+    keeping acronyms together ("UserVOMapper" -> User, VO, Mapper)."""
+    words = []
+    for part in re.split(r"[._\-\s]+", file_name):
+        words += re.findall(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+", part)
+    return words
+
+
+def file_type(path: str) -> str:
+    """Type of a file from its name only (not its folder or content).
+
+    The file name without its extension(s) is split into words.
+    Test: the name starts with "test"/"tests" or ends with "Test", "Tests", "Spec" or
+    "IT" ("UserControllerTest.java", "test_api.py", "user.spec.ts", "UserServiceIT.java").
+    Otherwise the last word that names a type decides: "UserController.java" ->
+    Controller, "OrderRequestMapper.java" -> Mapper, "application-config.yml" ->
+    Config, "UserVO.java" -> VO. No match -> Other.
+    """
+    name = path.rsplit("/", 1)[-1]
+    stem = name.split(".", 1)[0] if not name.startswith(".") else name.lstrip(".").split(".", 1)[0]
+    words = _name_words(stem)
+    if "." in name.lstrip("."):      # e.g. "user.spec.ts": the middle parts count too
+        words += _name_words(".".join(name.lstrip(".").split(".")[1:-1]))
+    if words and (words[0].lower() in ("test", "tests")               # test_api.py, TestUser.java
+                  or words[-1].lower() in ("test", "tests", "spec", "specs")
+                  or words[-1] == "IT"):                                # UserServiceIT.java
+        return "Test"
+    found = None
+    for word in words:
+        t = _WORD_TO_TYPE.get(word.lower())
+        if t and t != "Test":
+            found = t
+    return found or OTHER_TYPE
+
+
+@dataclasses.dataclass
+class FileStats:
+    path: str
+    type: str
+    commits: List[Commit]          # in git log order, newest first
+    users: List[str]               # distinct author names, in order of first appearance
+    statuses: List[str]            # status of each commit for this file, same order
+
+
+def file_stats(r: RepoReport) -> List[FileStats]:
+    out = []
+    for path, entries in r.files:
+        users: List[str] = []
+        for c, _ in entries:
+            if c.author_name not in users:
+                users.append(c.author_name)
+        out.append(FileStats(path, file_type(path), [c for c, _ in entries], users,
+                             [ch.status + ch.score for _, ch in entries]))
+    return out
+
+
+def _rel_href(from_file: str, to_file: str) -> str:
+    rel = os.path.relpath(os.path.abspath(to_file), os.path.dirname(os.path.abspath(from_file)))
+    return urllib.parse.quote(rel.replace(os.sep, "/"), safe="/")
+
+
+def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> str:
+    review_href = _rel_href(cfg.stats_output_file, cfg.output_file)
+    out: List[str] = []
+    w = out.append
+    w("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+    w('<meta name="viewport" content="width=device-width, initial-scale=1">\n')
+    w(f"<title>Release statistics: {esc(cfg.target.name)}</title>\n<style>{STATS_CSS}</style>\n"
+      "</head>\n<body>\n<header>\n")
+    w(f"<h1>Release statistics: <code>{esc(cfg.target.name)}</code></h1>\n")
+    w(f'<p class="pagelink"><a href="{esc(review_href)}">← Review page</a></p>\n')
+    w('<dl class="facts">\n')
+    for k, v in (("Generated", generated), ("REPOS_FOLDER", cfg.repos_folder),
+                 ("TARGET_BRANCH", cfg.target.name), ("Country", cfg.target.country),
+                 ("Version", cfg.target.version)):
+        w(f"<dt>{esc(k)}</dt><dd><code>{esc(v)}</code></dd>\n")
+    w("</dl>\n")
+    w('<p class="explain">For every file changed between each repository\'s base and target '
+      "branch: <b>Commits</b> = number of commits that changed the file, <b>Users</b> = number "
+      "of different commit authors. Files are grouped by a type taken from the file name "
+      "(e.g. <code>UserController.java</code> → Controller, <code>UserControllerTest.java</code> "
+      "→ Test). Click a count to see the commits.</p>\n")
+    w('<div class="tools"><button type="button" id="open-all">Expand all commit lists</button>'
+      '<button type="button" id="close-all">Collapse all commit lists</button></div>\n')
+    w("</header>\n<main>\n")
+
+    changed = [r for r in reports if r.state == STATE_CHANGES]
+    others = [r for r in reports if r.state != STATE_CHANGES]
+    if others:
+        w('<section class="others"><h2>Repositories without statistics</h2><ul>\n')
+        for r in others:
+            label = "Error" if r.state == STATE_ERROR else "No change"
+            w(f'<li><b>{esc(r.name)}</b> <span class="pill pill-{r.state}">{label}</span> '
+              f'<span class="reason">{esc(r.reason)}</span></li>\n')
+        w("</ul></section>\n")
+    if not changed:
+        w("<p>No repository has commits to summarise.</p>\n")
+
+    for r in changed:
+        rid = anchor_id("stats", r.name)
+        stats = file_stats(r)
+        w(f'<details class="repo" id="{esc(rid)}" open><summary><span class="repo-name">'
+          f"{esc(r.name)}</span> <code>{esc(r.base_branch)}</code> → <code>{esc(r.target_branch)}</code>"
+          f'<a class="anchor" href="#{esc(rid)}">#</a></summary>\n')
+        w('<div class="repo-body">\n')
+        by_type: Dict[str, List[FileStats]] = {}
+        for fs in stats:
+            by_type.setdefault(fs.type, []).append(fs)
+        for t in FILE_TYPES + [OTHER_TYPE]:
+            group = by_type.get(t)
+            if not group:
+                continue
+            w(f'<h3 class="type-head">{esc(t)} <span class="muted">({len(group)} '
+              f'file{"s" if len(group) != 1 else ""})</span></h3>\n')
+            w('<table class="stats"><thead><tr><th>File</th><th class="num">Commits</th>'
+              '<th class="num">Users</th><th>Commit messages</th></tr></thead><tbody>\n')
+            for fs in group:
+                fid = anchor_id("file", r.name, fs.path)
+                w(f'<tr><td class="path"><a href="{esc(review_href)}#{esc(fid)}" '
+                  f'title="Open this file on the review page">{esc(fs.path)}</a></td>'
+                  f'<td class="num">{len(fs.commits)}</td>'
+                  f'<td class="num" title="{esc(", ".join(fs.users))}">{len(fs.users)}</td><td>')
+                w(f'<details class="msgs"><summary>{len(fs.commits)} commit'
+                  f'{"s" if len(fs.commits) != 1 else ""} by {esc(", ".join(fs.users))}</summary>'
+                  '<ol>')
+                for c, st in zip(fs.commits, fs.statuses):
+                    w(f'<li><pre class="msg">{esc(c.message)}</pre><div class="meta">'
+                      f'<span class="st">{esc(st)}</span> <span>{esc(c.author_date)}</span> '
+                      f'<code>{esc(c.hash)}</code> <b>{esc(c.author_name)}</b></div></li>')
+                w("</ol></details></td></tr>\n")
+            w("</tbody></table>\n")
+        w("</div>\n</details>\n")
+
+    w(f"</main>\n<script>{STATS_JS}</script>\n</body>\n</html>\n")
+    return "".join(out)
+
+
+STATS_CSS = r"""
+:root{--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--accent:#0969da}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--fg);background:#fff}
+code,pre,.path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+header{padding:16px 20px;border-bottom:1px solid var(--line)}
+h1{font-size:20px;margin:0 0 6px}
+.pagelink{margin:0 0 10px}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:2px 14px;margin:0 0 10px}
+.facts dt{color:var(--muted)}.facts dd{margin:0;word-break:break-all}
+.explain{color:var(--muted);max-width:900px;margin:0 0 10px}
+.tools button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;margin-right:6px}
+main{padding:12px 20px 40px}
+.others ul{padding-left:18px}.reason{color:var(--muted);font-size:13px}
+.pill{display:inline-block;padding:0 8px;border-radius:10px;font-size:12px;font-weight:600;border:1px solid}
+.pill-error{color:#fff;background:#cf222e;border-color:#cf222e}.pill-no_change{color:#818b98;border-color:var(--line)}
+details.repo{border:1px solid var(--line);border-radius:8px;margin:0 0 16px}
+details.repo>summary{padding:8px 12px;font-size:15px;background:var(--panel);border-bottom:1px solid var(--line);cursor:pointer;position:sticky;top:0;z-index:5}
+.repo-name{font-weight:700;font-size:17px;margin-right:6px}
+.anchor{margin-left:8px;color:#818b98;text-decoration:none}
+.repo-body{padding:4px 12px 12px}
+.type-head{font-size:15px;margin:14px 0 6px}
+.muted{color:var(--muted);font-weight:400;font-size:13px}
+table.stats{border-collapse:collapse;width:100%}
+table.stats th,table.stats td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
+table.stats th{background:var(--panel);font-size:12px}
+table.stats td.path{width:38%;word-break:break-all;font-size:13px}
+.num{text-align:right!important;width:80px;font-variant-numeric:tabular-nums}
+details.msgs>summary{cursor:pointer;color:var(--accent);font-size:13px}
+details.msgs ol{margin:6px 0 0;padding-left:20px}
+details.msgs li{margin:0 0 8px}
+.msg{white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:12px}
+.meta{font-size:11px;color:var(--muted)}.meta .st{font-weight:700}
+@media print{.tools,.pagelink,.anchor{display:none}details.repo>summary{position:static}}
+@media (max-width:700px){table.stats td.path{width:auto}}
+"""
+
+STATS_JS = r"""
+(function(){
+  function all(open){document.querySelectorAll('details.msgs').forEach(function(d){d.open=open;});}
+  document.getElementById('open-all').addEventListener('click',function(){all(true);});
+  document.getElementById('close-all').addEventListener('click',function(){all(false);});
+  window.addEventListener('beforeprint',function(){all(true);});
+})();
+"""
+
+
 
 def main() -> int:
     try:
         generate_report(REPOS_FOLDER, TARGET_BRANCH, REMOTE_NAME, OUTPUT_FILE, DIFF_URL_TEMPLATE,
-                        BITBUCKET_BASE_URL, FALLBACK_BASE_BRANCH)
+                        BITBUCKET_BASE_URL, FALLBACK_BASE_BRANCH, STATS_OUTPUT_FILE)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
