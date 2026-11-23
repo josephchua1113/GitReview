@@ -18,6 +18,7 @@ from datetime import datetime
 BITBUCKET_URL = "https://bitbucket.yourcompany.com"   # your Bitbucket Server URL
 TOKEN         = "PASTE-YOUR-HTTP-ACCESS-TOKEN-HERE"   # HTTP access token (read only)
 BASE_DIR      = r"C:\git-logs"                         # where repos + log are saved
+PROJECTS      = ["PROJ1", "PROJ2"]                     # project keys to sync; [] = all projects
 # =========================
 
 LOG_FILE = os.path.join(BASE_DIR, "sync.log")
@@ -30,18 +31,33 @@ def log(msg):
         f.write(line + "\n")
 
 
-def get_repos():
-    """Step 1: get the list of all repos the token can read."""
-    repos, start = [], 0
+def get_paged(path):
+    """Call a Bitbucket list endpoint and return all pages of results."""
+    items, start = [], 0
     while True:
-        url = f"{BITBUCKET_URL.rstrip('/')}/rest/api/1.0/repos?limit=100&start={start}"
+        url = f"{BITBUCKET_URL.rstrip('/')}{path}?limit=100&start={start}"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {TOKEN}"})
         with urllib.request.urlopen(req) as resp:
             page = json.load(resp)
-        repos.extend(page["values"])
+        items.extend(page["values"])
         if page.get("isLastPage", True):
-            return repos
+            return items
         start = page["nextPageStart"]
+
+
+def get_repos():
+    """Step 1: get the repos of the projects in PROJECTS (or all if empty)."""
+    if not PROJECTS:
+        return get_paged("/rest/api/1.0/repos")
+    repos = []
+    for key in PROJECTS:
+        try:
+            found = get_paged(f"/rest/api/1.0/projects/{key}/repos")
+            log(f"Project {key}: {len(found)} repos")
+            repos.extend(found)
+        except Exception as e:
+            log(f"ERROR: could not list project {key} (check the key / access). {e}")
+    return repos
 
 
 def git(*args):
