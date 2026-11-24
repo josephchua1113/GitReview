@@ -58,8 +58,10 @@ DIFF_URL_TEMPLATE = None                    # only needed for self-hosted / unre
 #   path_sha256 and path_sha1 are empty strings.
 # =========================
 
+import base64
 import dataclasses
 import datetime as _dt
+import gzip
 import hashlib
 import html
 import os
@@ -1048,7 +1050,14 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
       '<button type="button" id="collapse-all">Collapse all</button>'
       '<button type="button" id="clear-filters">Clear filters</button>'
       '<button type="button" id="toggle-diff" aria-pressed="false">Hide code diff column</button>'
-      '<button type="button" id="toggle-details" aria-pressed="false">Hide changes column</button>\n')
+      '<button type="button" id="toggle-details" aria-pressed="false">Hide changes column</button>'
+      '<button type="button" id="draw-all" title="Code diffs are drawn as you scroll to them. '
+      'This draws every one now (for printing or Ctrl+F).">Draw all diffs</button>\n')
+    w('<div class="diff-search"><input type="search" id="qd" placeholder="Search code diffs" '
+      'aria-label="Search inside the code diffs" autocomplete="off">'
+      '<button type="button" id="qd-prev" title="Previous match (Shift+Enter)">↑</button>'
+      '<button type="button" id="qd-next" title="Next match (Enter)">↓</button>'
+      '<span id="qd-state" class="qd-state" aria-live="polite"></span></div>\n')
     w('<span id="filter-state" class="filter-state" aria-live="polite"></span>\n')
     w("</div>\n<main>\n")
 
@@ -1068,6 +1077,8 @@ def render_html(cfg: Config, generated: str, reports: Sequence[RepoReport]) -> s
             _render_repo_message(w, r, "quiet", cfg.remote_name)
         w("</section>\n")
 
+    w('<noscript><style>pre.diff[data-z]:not(.drawn)::before{content:"The code diff is stored '
+      'compressed and needs JavaScript to be shown."}</style></noscript>\n')
     w(f"</main>\n<script>{JS}</script>\n</body>\n</html>\n")
     return "".join(out)
 
@@ -1178,17 +1189,26 @@ def _render_repo_changes(w, r: RepoReport, remote: str):
 
 def _render_file_row(w, r: RepoReport, fid: str, label: str, path: str, compare: str,
                      entries, classes: str):
-    w(f'<div class="{classes}" id="{esc(fid)}" data-path="{esc(path)}">\n')
+    diff, err = r.diffs.get(path, ("", "")) if path else ("", "")
+    lines = [] if err else diff_code_lines(diff)
+    # Rows far from the screen are skipped by the browser's layout (CSS
+    # content-visibility:auto) until scrolled near; this estimated height keeps the
+    # scrollbar and jumps to a file accurate before the row is laid out.
+    w(f'<div class="{classes}" id="{esc(fid)}" data-path="{esc(path)}" '
+      f'style="contain-intrinsic-size:auto {_estimate_row_height(path, len(lines), entries)}px">\n')
     w(f'<div class="file-col"><div class="file-col-inner">{label}'
       f'<div class="file-links">{compare}'
       f'<a class="anchor" href="#{esc(fid)}" title="Link to this file">#</a></div></div></div>\n')
     w('<details class="diff-col" open><summary class="diff-head">Code diff</summary>\n')
     if path:
-        diff, err = r.diffs.get(path, ("", ""))
         if err:
             w(f'<p class="diff-error">{esc(err)}</p>\n')
-        elif diff_code_lines(diff):
-            w(f'<pre class="diff">{_render_diff(diff_code_lines(diff))}</pre>\n')
+        elif lines:
+            # Stored compressed and drawn by the page script when the row comes near
+            # the screen (see pack_diff and JS). The height is reserved up front so
+            # the page doesn't jump while diffs are drawn.
+            w(f'<pre class="diff" data-z="{pack_diff(lines)}" data-n="{len(lines)}" '
+              f'style="--n:{len(lines)}"></pre>\n')
         else:
             w('<p class="diff-empty">git diff shows no difference for this file between the '
               'merge base and the target branch.</p>\n')
@@ -1198,6 +1218,14 @@ def _render_file_row(w, r: RepoReport, fid: str, label: str, path: str, compare:
     for commit, ch in entries:
         _render_entry(w, r, commit, ch)
     w("</ol>\n</details>\n</div>\n")
+
+
+def _estimate_row_height(path: str, n_diff_lines: int, entries) -> int:
+    """Rough pixel height of a file row, used only until the browser lays it out."""
+    diff_h = (24 + (min(600, 12 + 17 * n_diff_lines) if n_diff_lines else 40)) if path else 0
+    changes_h = 24 + sum(62 + 19 * (c.message.count("\n") + 1) + (22 if ch and ch.old_path else 0)
+                         for c, ch in entries)
+    return max(60, diff_h, changes_h)
 
 
 _DIFF_HEADER_SKIP = ("diff --git ", "index ", "--- ", "+++ ")
@@ -1240,6 +1268,25 @@ def diff_code_lines(diff: str) -> List[Tuple[str, str]]:
             out.append(("c", line))
     flush_header()
     return out
+
+
+def pack_diff(lines: Sequence[Tuple[str, str]]) -> str:
+    """The code-diff lines of one file, gzip-compressed and base64-encoded.
+
+    Each line is stored as its kind letter (h/a/d/c/m, see diff_code_lines) followed
+    by the line exactly as git printed it; lines are joined with "\\n". The page
+    script unpacks this with the browser's DecompressionStream and draws it.
+    Nothing is cut or summarised: unpack_diff(pack_diff(x)) == x.
+    """
+    text = "\n".join(k + line for k, line in lines)
+    data = gzip.compress(text.encode("utf-8"), compresslevel=6, mtime=0)
+    return base64.b64encode(data).decode("ascii")
+
+
+def unpack_diff(packed: str) -> List[Tuple[str, str]]:
+    """Inverse of pack_diff (used by the tests and for checking a page)."""
+    text = gzip.decompress(base64.b64decode(packed)).decode("utf-8")
+    return [(l[0], l[1:]) for l in text.split("\n")] if text else []
 
 
 def _render_diff(lines: Sequence[Tuple[str, str]]) -> str:
@@ -1301,6 +1348,16 @@ h1{font-size:20px;margin:0 0 10px}
 .status-filter label{white-space:nowrap;cursor:pointer}
 .toolbar button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
 .filter-state{color:var(--muted);font-size:12px}
+.diff-search{display:flex;flex:1 1 300px;gap:4px;align-items:center;min-width:220px}
+.toolbar .diff-search input[type=search]{flex:1 1 auto;min-width:140px}
+.diff-search button{padding:4px 8px}
+.qd-state{color:var(--muted);font-size:12px;white-space:nowrap}
+pre.diff[data-z]{position:relative}
+pre.diff[data-z]:not(.drawn){height:min(600px,calc(var(--n) * 16.8px + 12px));color:var(--muted);overflow:hidden}
+pre.diff[data-z]:not(.drawn)::before{content:"Loading " attr(data-n) " lines\2026";display:block;padding:0 10px}
+pre.diff.unpack-error{white-space:pre-wrap;color:#82071e;height:auto;padding:6px 10px}
+pre.diff span.hit{background:#fff8c5;box-shadow:inset 3px 0 0 #bf8700}
+pre.diff span.hit-cur{background:#ffd33d;box-shadow:inset 3px 0 0 #9a6700}
 .pagelink{margin:0 0 10px}
 main{padding:12px 20px 40px}
 .group{margin-bottom:28px}
@@ -1381,6 +1438,7 @@ span.hash{color:var(--fg)}
 .copy{font:inherit;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:pointer}
 .user .an{color:var(--fg);font-weight:600}
 .filtered{display:none!important}
+.file{content-visibility:auto;contain-intrinsic-size:auto 300px}
 :target{scroll-margin-top:calc(var(--tb-h) + var(--rh-h) + 40px)}
 @media print{
  .toolbar,.anchor,.copy{display:none!important}
@@ -1390,8 +1448,11 @@ span.hash{color:var(--fg)}
  .files-head,.file,body .file,body .files-head{grid-template-columns:minmax(120px,18%) minmax(0,1.35fr) minmax(0,1fr)!important}
  .detail-col>summary.detail-head,.diff-col>summary.diff-head{display:none}
  pre.diff{max-height:none;overflow:visible}
+ pre.diff[data-z]:not(.drawn){height:auto}
+ pre.diff[data-z]:not(.drawn)::before{content:"This code diff was not drawn yet. Click \"Draw all diffs\" on the page, wait for it to finish, then print again."}
  pre.diff span{white-space:pre-wrap;min-width:0;word-break:break-all}
  .filtered{display:revert!important}
+ .file{content-visibility:visible}
  .no-match{display:none!important}
  details.repo,.file{break-inside:auto}
  a{color:inherit}
@@ -1470,8 +1531,137 @@ JS = r"""
   }
   window.addEventListener('hashchange',openTarget); openTarget();
 
-  // Printing: expand every section (filters are ignored by the print stylesheet).
-  window.addEventListener('beforeprint',function(){setAll(true);});
+  // ---- Code diffs: stored gzip-compressed + base64 in data-z, drawn on demand ----
+  // Each unpacked line is a kind letter (h/a/d/c/m) followed by the line exactly as
+  // git printed it. A diff is drawn when its row comes near the screen, when a
+  // search match in it is shown, or by "Draw all diffs". Nothing is cut.
+  var pres=q('pre.diff[data-z]');
+  var canUnpack=typeof DecompressionStream!=='undefined'&&typeof Blob!=='undefined'&&typeof Response!=='undefined';
+  var KIND={h:'dh',a:'da',d:'dd',c:'dc',m:'dm'};
+  function b64bytes(b64){var bin=atob(b64),n=bin.length,u=new Uint8Array(n);for(var i=0;i<n;i++)u[i]=bin.charCodeAt(i);return u;}
+  function unpack(pre){
+    if(!canUnpack) return Promise.reject(new Error('this browser has no DecompressionStream (needs Chrome/Edge 80+, Firefox 113+ or Safari 16.4+)'));
+    var s=new Blob([b64bytes(pre.getAttribute('data-z'))]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Response(s).text().then(function(t){return t?t.split('\n'):[];});
+  }
+  function escH(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  var io=null;
+  function draw(pre){
+    if(pre._drawn) return pre._drawn;
+    pre._drawn=unpack(pre).then(function(lines){
+      var h=new Array(lines.length);
+      for(var i=0;i<lines.length;i++){var l=lines[i];h[i]='<span class="'+(KIND[l.charAt(0)]||'dc')+'">'+escH(l.slice(1))+'</span>';}
+      pre.innerHTML=h.join('');
+      pre.classList.add('drawn');
+      markPre(pre);
+    },function(err){
+      pre.classList.add('drawn','unpack-error');
+      pre.textContent='This code diff could not be unpacked: '+(err&&err.message||err);
+    }).then(function(){if(io) io.unobserve(pre);});
+    return pre._drawn;
+  }
+  if('IntersectionObserver' in window){
+    io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting) draw(e.target);});},{rootMargin:'1500px 0px'});
+    pres.forEach(function(p){io.observe(p);});
+  }
+  var drawBtn=document.getElementById('draw-all'), drawing=null;
+  function drawAll(){
+    if(drawing) return drawing;
+    var todo=pres.filter(function(p){return !p.classList.contains('drawn');}), i=0;
+    drawBtn.disabled=true;
+    drawing=new Promise(function(done){
+      (function step(){
+        var batch=[], lines=0;
+        while(i<todo.length&&(batch.length===0||lines<20000)){lines+=+todo[i].getAttribute('data-n'); batch.push(draw(todo[i++]));}
+        drawBtn.textContent='Drawing diffs '+i+' / '+todo.length+'…';
+        Promise.all(batch).then(function(){
+          if(i<todo.length) setTimeout(step,0);
+          else{drawBtn.textContent='All diffs drawn'; done();}
+        });
+      })();
+    });
+    return drawing;
+  }
+  drawBtn.addEventListener('click',drawAll);
+  if(!io) drawAll();
+  if(!pres.length){drawBtn.disabled=true; drawBtn.textContent='All diffs drawn';}
+
+  // ---- Search inside the code diffs ----
+  var qd=document.getElementById('qd'), qdState=document.getElementById('qd-state');
+  var low=new Map();          // pre -> lower-cased lines (without the kind letter)
+  var hits=[], hitsBy=new Map(), cur=-1, term='', runId=0, timer=null;
+  function linesOf(pre){
+    if(low.has(pre)) return Promise.resolve(low.get(pre));
+    return unpack(pre).then(function(lines){
+      var l=lines.map(function(x){return x.slice(1).toLowerCase();}); low.set(pre,l); return l;
+    });
+  }
+  function markPre(pre){
+    if(!pre.classList.contains('drawn')) return;
+    q('span.hit',pre).forEach(function(s){s.classList.remove('hit','hit-cur');});
+    (hitsBy.get(pre)||[]).forEach(function(k){var s=pre.children[k]; if(s) s.classList.add('hit');});
+  }
+  function runSearch(){
+    var t=(qd.value||'').toLowerCase(), id=++runId;
+    var old=Array.from(hitsBy.keys());
+    hits=[]; hitsBy=new Map(); cur=-1; term=t;
+    old.forEach(markPre);
+    if(!t){qdState.textContent=''; return Promise.resolve();}
+    if(!canUnpack){qdState.textContent='This browser cannot unpack the diffs.'; return Promise.resolve();}
+    var i=0;
+    return new Promise(function(done){
+      (function step(){
+        if(id!==runId) return done();
+        var batch=pres.slice(i,i+50); i+=batch.length;
+        qdState.textContent='Searching '+i+' / '+pres.length+' files…';
+        Promise.all(batch.map(function(p){return linesOf(p).catch(function(){return [];});})).then(function(all){
+          if(id!==runId) return done();
+          all.forEach(function(lines,b){
+            var pre=batch[b], ks=[];
+            for(var k=0;k<lines.length;k++){ if(lines[k].indexOf(t)!==-1){ks.push(k); hits.push({pre:pre,k:k});} }
+            if(ks.length){hitsBy.set(pre,ks); markPre(pre);}
+          });
+          if(i<pres.length) return setTimeout(step,0);
+          var files=hitsBy.size;
+          qdState.textContent=hits.length?(hits.length+' matching line'+(hits.length===1?'':'s')+' in '+files+' file'+(files===1?'':'s')+'. Press Enter for the next one.'):'No code diff line matches.';
+          done();
+        });
+      })();
+    });
+  }
+  function go(step){
+    if(!hits.length) return;
+    cur=(cur+step+hits.length)%hits.length;
+    var h=hits[cur], pre=h.pre, n=cur;
+    if(document.body.classList.contains('diff-hidden')) document.getElementById('toggle-diff').click();
+    for(var d=pre; d; d=d.parentElement){ if(d.tagName==='DETAILS') d.open=true; }
+    var hidden=!!pre.closest('.filtered');
+    draw(pre).then(function(){
+      if(n!==cur) return;
+      q('span.hit-cur').forEach(function(s){s.classList.remove('hit-cur');});
+      var s=pre.children[h.k]; if(!s) return;
+      s.classList.add('hit-cur');
+      pre.scrollTop=Math.max(0,s.offsetTop-pre.clientHeight/3);
+      var file=pre.closest('.file');
+      var top=s.getBoundingClientRect().top-(document.getElementById('toolbar').offsetHeight+120);
+      window.scrollBy(0,top);
+      var where=file?file.getAttribute('data-path'):'';
+      qdState.textContent='Match '+(cur+1)+' of '+hits.length+(where?' — '+where:'')+(hidden?' (this file is hidden by the search/status filter above: clear filters to see it)':'');
+    });
+  }
+  qd.addEventListener('input',function(){clearTimeout(timer); timer=setTimeout(runSearch,300);});
+  qd.addEventListener('keydown',function(e){
+    if(e.key!=='Enter') return; e.preventDefault();
+    clearTimeout(timer);
+    var back=e.shiftKey;
+    (term===(qd.value||'').toLowerCase()?Promise.resolve():runSearch()).then(function(){go(back?-1:1);});
+  });
+  document.getElementById('qd-next').addEventListener('click',function(){(term===(qd.value||'').toLowerCase()?Promise.resolve():runSearch()).then(function(){go(1);});});
+  document.getElementById('qd-prev').addEventListener('click',function(){(term===(qd.value||'').toLowerCase()?Promise.resolve():runSearch()).then(function(){go(-1);});});
+
+  // Printing: expand every section (filters are ignored by the print stylesheet)
+  // and start drawing every diff (a diff not drawn yet prints a note saying so).
+  window.addEventListener('beforeprint',function(){setAll(true); drawAll();});
 
   // Copy commit id.
   document.addEventListener('click',function(ev){
@@ -1628,36 +1818,42 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
       "(e.g. <code>UserController.java</code> → Controller, <code>UserControllerTest.java</code> "
       "→ Test, <code>DateUtils.java</code> → Util); a file whose name matches no type but "
       "sits in a <code>resources/</code>, <code>routes/</code> or <code>template(s)/</code> "
-      "folder goes to Resources, Route or Template. Click a commit list to see the commits.</p>\n")
-    w('<div class="tools"><button type="button" id="open-all">Expand all commit lists</button>'
-      '<button type="button" id="close-all">Collapse all commit lists</button></div>\n')
+      "folder goes to Resources, Route or Template. The <b>Summary</b> tab lists the files changed by more than one user; the <b>Details</b> tab lists every file by type, with its commits. Repositories with no change are not shown.</p>\n")
     w("</header>\n<main>\n")
 
     changed = [r for r in reports if r.state == STATE_CHANGES]
-    others = [r for r in reports if r.state != STATE_CHANGES]
-    if others:
-        w('<section class="others"><h2>Repositories without statistics</h2><ul>\n')
-        for r in others:
-            label = "Error" if r.state == STATE_ERROR else "No change"
-            w(f'<li><b>{esc(r.name)}</b> <span class="pill pill-{r.state}">{label}</span> '
+    # Repositories with no change are left off this page; errors are still listed.
+    errors = [r for r in reports if r.state == STATE_ERROR]
+    if errors:
+        w('<section class="others"><h2>Repositories with errors</h2><ul>\n')
+        for r in errors:
+            w(f'<li><b>{esc(r.name)}</b> <span class="pill pill-{r.state}">Error</span> '
               f'<span class="reason">{esc(r.reason)}</span></li>\n')
         w("</ul></section>\n")
     if not changed:
         w("<p>No repository has commits to summarise.</p>\n")
 
-    # Summary: per repository, the files changed by more than one user
+    if changed:
+        w('<div class="tabs" role="tablist">'
+          '<button type="button" role="tab" id="tab-btn-summary" aria-controls="tab-summary" '
+          'aria-selected="true">Summary</button>'
+          '<button type="button" role="tab" id="tab-btn-details" aria-controls="tab-details" '
+          'aria-selected="false">Details</button></div>\n')
+        w('<div class="tab-panel" id="tab-summary" role="tabpanel" aria-labelledby="tab-btn-summary">\n')
+    # Summary tab: per repository, the files changed by more than one user
     if changed:
         w('<section class="summary"><h2>Files modified by more than one user</h2>\n'
           '<p class="muted">Test files are left out of this summary. They are still listed '
-          'in the Test group below.</p>\n')
+          'in the Test group on the Details tab.</p>\n')
+        shown = 0
         for r in changed:
             multi = sorted((fs for fs in file_stats(r) if len(fs.users) > 1 and fs.type != "Test"),
                            key=lambda fs: (-len(fs.users), _sort_key(fs.path)))
+            if not multi:
+                continue  # repositories with no such file are left out of the summary
+            shown += 1
             w(f'<h3><a href="#{esc(anchor_id("stats", r.name))}">{esc(r.name)}</a> '
               f'<span class="muted">({len(multi)} file{"s" if len(multi) != 1 else ""})</span></h3>\n')
-            if not multi:
-                w('<p class="muted">No file was modified by more than one user.</p>\n')
-                continue
             w('<table class="stats summary-table sortable"><thead><tr>'
               '<th aria-sort="none"><button type="button" class="sort" data-kind="text">File</button></th>'
               '<th aria-sort="none"><button type="button" class="sort" data-kind="text">Type</button></th>'
@@ -1671,7 +1867,12 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
                   f'<td>{esc(fs.type)}</td><td class="num">{len(fs.users)}</td>'
                   f'<td class="num">{len(fs.commits)}</td><td>{esc(", ".join(fs.users))}</td></tr>\n')
             w("</tbody></table>\n")
-        w("</section>\n")
+        if not shown:
+            w('<p class="muted">No repository has a file modified by more than one user.</p>\n')
+        w("</section>\n</div>\n")
+        w('<div class="tab-panel" id="tab-details" role="tabpanel" aria-labelledby="tab-btn-details" hidden>\n')
+        w('<div class="tools"><button type="button" id="open-all">Expand all commit lists</button>'
+          '<button type="button" id="close-all">Collapse all commit lists</button></div>\n')
 
     for r in changed:
         rid = anchor_id("stats", r.name)
@@ -1708,6 +1909,8 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
                 w("</ol></details></td></tr>\n")
             w("</tbody></table>\n")
         w("</div>\n</details>\n")
+    if changed:
+        w("</div>\n")
 
     w(f"</main>\n<script>{STATS_JS}</script>\n</body>\n</html>\n")
     return "".join(out)
@@ -1731,6 +1934,10 @@ main{padding:12px 20px 40px}
 .summary h2{font-size:16px;margin:4px 0 8px}.summary h3{font-size:14px;margin:12px 0 4px}
 .summary-table td.path{width:40%}
 .summary-table th{white-space:nowrap}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:0 0 14px}
+.tabs [role=tab]{font:inherit;font-weight:600;padding:8px 16px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:none;cursor:pointer;color:var(--muted);margin-bottom:-1px}
+.tabs [role=tab][aria-selected=true]{color:var(--fg);background:#fff;border-color:var(--line);border-bottom:1px solid #fff}
+.tab-panel .tools{margin:0 0 12px}
 button.sort{font:inherit;font-weight:600;border:0;background:none;padding:0;cursor:pointer;color:inherit}
 button.sort::after{content:" \2195";color:#818b98}
 th[aria-sort=ascending] button.sort::after{content:" \25B2";color:var(--fg)}
@@ -1756,15 +1963,39 @@ details.msgs ol{margin:6px 0 0;padding-left:20px}
 details.msgs li{margin:0 0 8px}
 .msg{white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:12px}
 .meta{font-size:11px;color:var(--muted)}.meta .st{font-weight:700}
-@media print{.tools,.pagelink,.anchor{display:none}details.repo>summary{position:static}}
+@media print{.tools,.pagelink,.anchor,.tabs{display:none}.tab-panel[hidden]{display:block}details.repo>summary{position:static}}
 @media (max-width:700px){table.stats td.path{width:auto}}
 """
 
 STATS_JS = r"""
 (function(){
+  var tabs={summary:document.getElementById('tab-summary'),details:document.getElementById('tab-details')};
+  function show(name){
+    if(!tabs.summary) return;
+    Object.keys(tabs).forEach(function(k){
+      tabs[k].hidden=(k!==name);
+      document.getElementById('tab-btn-'+k).setAttribute('aria-selected',k===name?'true':'false');
+    });
+  }
+  document.querySelectorAll('[role=tab]').forEach(function(b){
+    b.addEventListener('click',function(){show(b.id.replace('tab-btn-',''));});
+  });
+  // A link or address to a row or repository on the Details tab opens that tab first.
+  function follow(hash){
+    if(!hash||hash.length<2) return;
+    var el=document.getElementById(decodeURIComponent(hash.slice(1)));
+    if(el&&tabs.details&&tabs.details.contains(el)){show('details');el.scrollIntoView();}
+  }
+  document.addEventListener('click',function(e){
+    var a=e.target.closest&&e.target.closest('a[href^="#"]');
+    if(a) follow(a.getAttribute('href'));
+  });
+  window.addEventListener('hashchange',function(){follow(location.hash);});
+  follow(location.hash);
   function all(open){document.querySelectorAll('details.msgs').forEach(function(d){d.open=open;});}
-  document.getElementById('open-all').addEventListener('click',function(){all(true);});
-  document.getElementById('close-all').addEventListener('click',function(){all(false);});
+  var oa=document.getElementById('open-all'), ca=document.getElementById('close-all');
+  if(oa) oa.addEventListener('click',function(){all(true);});
+  if(ca) ca.addEventListener('click',function(){all(false);});
   window.addEventListener('beforeprint',function(){all(true);});
   // Click a summary column header to sort by it; click again to reverse.
   document.querySelectorAll('table.sortable').forEach(function(t){
