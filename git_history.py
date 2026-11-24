@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Release review page generator.
 
-For every git repository directly inside REPOS_FOLDER, list the commits that are
-on the target release/hotfix branch but not on the closest lower branch of the
+For every git repository inside REPOS_FOLDER (directly, or inside sub folders down
+to REPO_SEARCH_DEPTH levels), list the commits that are on the target release/hotfix branch but not on the closest lower branch of the
 same country, grouped by repository and then by file, as one static HTML page.
 
 Rules this script follows:
@@ -18,6 +18,7 @@ Run with no arguments:  python git_history.py
 
 # ===== CONFIGURATION =====
 REPOS_FOLDER      = "/path/to/repos"        # parent folder containing the git repositories
+REPO_SEARCH_DEPTH = 3                       # folder levels searched below REPOS_FOLDER (2 = REPOS_FOLDER/<group>/<repo>)
 TARGET_BRANCH     = "release/SG_19.18.0"    # branch being released: <release|hotfix>/<Country>_<Version>
 REMOTE_NAME       = "origin"                # remote to read branches from
 OUTPUT_FILE       = "index.html"            # generated HTML page
@@ -257,17 +258,47 @@ def run_git(repo: str, args: Sequence[str]) -> str:
 # Repository discovery
 # --------------------------------------------------------------------------
 
-def discover_repos(repos_folder: str) -> Tuple[List[str], List[str]]:
-    """Direct subfolders that contain a .git directory, and the skipped subfolders."""
-    repos, skipped = [], []
-    for entry in sorted(os.listdir(repos_folder), key=_sort_key):
-        path = os.path.join(repos_folder, entry)
-        if not os.path.isdir(path):
-            continue
-        if os.path.isdir(os.path.join(path, ".git")):
-            repos.append(entry)
-        else:
-            skipped.append(entry)
+def discover_repos(repos_folder: str, max_depth: int = 3) -> Tuple[List[str], List[str]]:
+    """Git repositories under repos_folder, and the folders skipped because none was found.
+
+    A folder that contains .git is a repository; it is not searched further. Other
+    folders are searched down to max_depth levels below repos_folder, so both
+    REPOS_FOLDER/<repo> and REPOS_FOLDER/<group>/<repo> are found. Names are paths
+    relative to repos_folder with "/" between folders, e.g. "payments/api-service".
+    Skipped: the highest folders that hold no repository at any searched depth.
+    A symlink to a repository counts as a repository, but symlinked folders are not
+    searched further (so a link loop or a second link to a folder can't repeat repos).
+    """
+    repos: List[str] = []
+    skipped: List[str] = []
+
+    def walk(path: str, rel: List[str]) -> bool:
+        found = False
+        empty_children: List[str] = []
+        try:
+            entries = sorted(os.listdir(path), key=_sort_key)
+        except OSError:
+            entries = []
+        for entry in entries:
+            child = os.path.join(path, entry)
+            if not os.path.isdir(child):
+                continue
+            name = "/".join(rel + [entry])
+            if os.path.exists(os.path.join(child, ".git")):
+                repos.append(name)
+                found = True
+                continue
+            if len(rel) + 1 < max_depth and not os.path.islink(child):
+                if walk(child, rel + [entry]):
+                    found = True
+                    continue
+            empty_children.append(name)
+        if found or not rel:
+            skipped.extend(empty_children)   # report these; the parent holds repositories
+        return found
+
+    walk(repos_folder, [])
+    skipped.sort(key=lambda n: [_sort_key(p) for p in n.split("/")])
     return repos, skipped
 
 
@@ -846,7 +877,7 @@ def group_by_file(commits: Sequence[Commit]):
 
 
 def process_repo(cfg: Config, name: str, log: Callable[[str], None]) -> RepoReport:
-    rep = RepoReport(name=name, path=os.path.join(cfg.repos_folder, name))
+    rep = RepoReport(name=name, path=os.path.join(cfg.repos_folder, *name.split("/")))
     remote = cfg.remote_name
     target = cfg.target
     try:
@@ -941,7 +972,7 @@ def generate_report(repos_folder, target_branch, remote_name, output_file, diff_
 
     log(f"Target branch {cfg.target.name}: country {cfg.target.country}, "
         f"version {cfg.target.version}")
-    repo_names, skipped = discover_repos(cfg.repos_folder)
+    repo_names, skipped = discover_repos(cfg.repos_folder, REPO_SEARCH_DEPTH)
     for s in skipped:
         log(f"Skipped (not a git repository): {s}")
 
