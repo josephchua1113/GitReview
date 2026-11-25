@@ -41,6 +41,22 @@ def git(cwd, *args, env=None, input_bytes=None):
     return p.stdout.decode("utf-8", errors="replace").strip()
 
 
+
+# one row on the stats Details tab: file name (link to the git host, or plain text when
+# there are no links), the Compare/File links, then the link to the local review page
+STATS_ROW = (r'<tr id="stats-file/([^"]*)"><td class="path"><(?:a|span)[^>]*>([^<]*)</(?:a|span)>'
+             r'(?:<div class="flinks">(?:[^<]|<a [^>]*>[^<]*</a>)*</div>)?'
+             r'</td><td class="num">(\d+)</td><td class="num"[^>]*>(\d+)</td>')
+
+def unpack_cell(cell):
+    """Replace each compressed <pre class="diff" data-z=...> in an HTML fragment with
+    the spans the page script draws from it, so tests can read the diff lines."""
+    def repl(m):
+        lines = gh.unpack_diff(html.unescape(m.group(1)))
+        assert int(m.group(2)) == len(lines)
+        return '<pre class="diff">' + gh._render_diff(lines) + "</pre>"
+    return re.sub(r'<pre class="diff" data-z="([^"]*)" data-n="(\d+)" style="--n:\d+"></pre>', repl, cell)
+
 class Repo:
     """A working clone plus its bare 'remote' (origin)."""
 
@@ -680,7 +696,7 @@ class IntegrationTests(unittest.TestCase):
     def test_three_column_layout(self):
         # every file row: column 1 = path, column 2 = collapsible code diff,
         # column 3 = collapsible changes; both open by default
-        rows = re.findall(r'<div class="file[^"]*" id="[^"]*" data-path="[^"]*">\n'
+        rows = re.findall(r'<div class="file[^"]*" id="[^"]*" data-path="[^"]*" style="contain-intrinsic-size:auto \d+px">\n'
                           r'<div class="file-col">.*?</div></div></div>\n'
                           r'<details class="diff-col" open><summary class="diff-head">Code diff</summary>\n'
                           r'.*?</details>\n'
@@ -702,7 +718,8 @@ class IntegrationTests(unittest.TestCase):
     def _diff_cell(self, repo, path):
         fid = gh.anchor_id("file", repo, path)
         sec = self.page[self.page.index(f'id="{gh.esc(fid)}"'):]
-        return sec[sec.index('<details class="diff-col"'):sec.index('<details class="detail-col"')]
+        cell = sec[sec.index('<details class="diff-col"'):sec.index('<details class="detail-col"')]
+        return unpack_cell(cell)
 
     def test_code_diff_matches_git(self):
         a = self.by_name["alpha"]
@@ -767,6 +784,25 @@ class IntegrationTests(unittest.TestCase):
             ("a", "+++ added line that looks like a header"),
             ("m", "new file mode 100644"), ("m", "Binary files /dev/null and b/y differ")])
         self.assertEqual(gh.diff_code_lines(""), [])
+
+    def test_pack_diff_round_trip(self):
+        lines = [("h", "@@ -1 +1 @@"), ("d", "-caf\u00e9 <b>&amp;</b> \"q\""), ("a", "+\ufffd tab\there"),
+                 ("c", " "), ("c", ""), ("m", "Binary files a/x and b/x differ"), ("a", "+trailing \r")]
+        packed = gh.pack_diff(lines)
+        self.assertRegex(packed, r"^[A-Za-z0-9+/=]+$")        # safe inside an HTML attribute
+        self.assertEqual(gh.unpack_diff(packed), lines)
+        self.assertEqual(gh.pack_diff(lines), packed)           # deterministic output
+        big = [("a", "+line %d of a large file" % i) for i in range(50000)]
+        self.assertEqual(gh.unpack_diff(gh.pack_diff(big)), big)  # nothing cut
+        self.assertLess(len(gh.pack_diff(big)), len("".join(k + l for k, l in big)) / 3)
+
+    def test_diffs_stored_compressed(self):
+        self.assertNotIn('<span class="da">', self.page)       # no pre-drawn diff markup
+        pres = re.findall(r'<pre class="diff" data-z="[^"]*" data-n="(\d+)" style="--n:(\d+)"></pre>', self.page)
+        self.assertTrue(pres)
+        self.assertTrue(all(a == b for a, b in pres))
+        for i in ("id=\"draw-all\"", "id=\"qd\"", "id=\"qd-next\"", "id=\"qd-prev\"", "DecompressionStream", "<noscript>"):
+            self.assertIn(i, self.page)
 
     def test_repo_diffs_two_git_calls(self):
         calls = []
@@ -853,6 +889,75 @@ class FallbackBaseTests(unittest.TestCase):
                                    log=lambda s: None)
 
 
+class NestedFolderTests(unittest.TestCase):
+    """Repositories inside group folders: REPOS_FOLDER/<group>/<repo>."""
+
+    def test_discover_tree(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        def mk(*parts, git=None):
+            path = os.path.join(root, *parts)
+            os.makedirs(path, exist_ok=True)
+            if git == "dir":
+                os.makedirs(os.path.join(path, ".git"))
+            elif git == "file":                                  # worktree / submodule style
+                with open(os.path.join(path, ".git"), "w") as fh:
+                    fh.write("gitdir: elsewhere\n")
+        mk("alpha", git="dir")
+        mk("alpha", "inner", git="dir")                          # inside a repo: not searched
+        mk("teamA", "svc1", git="dir")
+        mk("teamA", "svc2", git="file")
+        mk("teamA", "docs")                                      # no repo under it
+        mk("teamB", "notes", "sub")                              # no repo anywhere below teamB
+        mk("deep", "a", "b", "repo", git="dir")                  # 4 levels down
+        mk("Payments", "api", git="dir")
+        os.symlink(os.path.join(root, "teamA"), os.path.join(root, "zlink"))      # not followed
+        os.symlink(os.path.join(root, "alpha"), os.path.join(root, "alpha-link"))  # link to a repo
+        with open(os.path.join(root, "README.txt"), "w") as fh:
+            fh.write("x")
+        repos, skipped = gh.discover_repos(root, 3)
+        self.assertEqual(repos, ["alpha", "alpha-link", "Payments/api", "teamA/svc1", "teamA/svc2"])
+        self.assertEqual(skipped, ["deep", "teamA/docs", "teamB", "zlink"])
+        repos4, skipped4 = gh.discover_repos(root, 4)
+        self.assertIn("deep/a/b/repo", repos4)
+        self.assertNotIn("deep", skipped4)
+        repos1, skipped1 = gh.discover_repos(root, 1)                # old behaviour: direct subfolders only
+        self.assertEqual(repos1, ["alpha", "alpha-link"])
+        self.assertEqual(skipped1, ["deep", "Payments", "teamA", "teamB", "zlink"])
+
+    def test_report_with_group_folders(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        repos, remotes = os.path.join(tmp, "repos"), os.path.join(tmp, "remotes")
+        os.makedirs(remotes)
+        made = {}
+        for group, name in (("teamA", "svc"), ("teamB", "svc"), (None, "top")):
+            parent = os.path.join(repos, group) if group else repos
+            os.makedirs(parent, exist_ok=True)
+            r = Repo(parent, name, os.path.join(remotes, group or ""))  # same repo name in two groups
+            r.write("x.txt", "1\n")
+            r.commit(f"{group} base")
+            r.push("hotfix/SG_19.17.1")
+            r.write("x.txt", "2\n")
+            r.commit(f"{group or 'top'} change")
+            r.push(TARGET)
+            made[f"{group}/{name}" if group else name] = r
+        out = os.path.join(tmp, "index.html")
+        rep = gh.generate_report(repos, TARGET, "origin", out, None, None, None,
+                                 os.path.join(tmp, "stats.html"), log=lambda s: None)
+        self.assertEqual([r.name for r in rep.repos], ["teamA/svc", "teamB/svc", "top"])
+        self.assertEqual(rep.skipped, [])
+        for r in rep.repos:
+            self.assertEqual(r.state, gh.STATE_CHANGES, r.name)
+            self.assertEqual(r.path, made[r.name].path)
+            self.assertEqual([c.message for c in r.commits], [f"{r.name.split('/')[0] if '/' in r.name else 'top'} change"])
+        # same repo name in two groups stays apart on both pages
+        for page in (rep.html, rep.stats_html):
+            self.assertIn('id="file/teamA/svc/x.txt"' if page is rep.html else 'id="stats-file/teamA/svc/x.txt"', page)
+            self.assertIn('id="file/teamB/svc/x.txt"' if page is rep.html else 'id="stats-file/teamB/svc/x.txt"', page)
+        self.assertIn('<span class="repo-name">teamA/svc</span>', rep.html)
+
+
 class StatsPageTests(unittest.TestCase):
     """The separate statistics page (STATS_OUTPUT_FILE)."""
 
@@ -888,8 +993,8 @@ class StatsPageTests(unittest.TestCase):
 
     def test_counts_and_grouping(self):
         c1 = self._commit("1", "Ann", "Fix user API\n\nsecond line", "src/UserController.java", "src/UserVO.java")
-        c2 = self._commit("2", "Bob", "Rename field", "src/UserController.java")
-        c3 = self._commit("3", "Ann", "Tidy <tags>", "src/UserController.java", "README.md")
+        c2 = self._commit("2", "Bob", "Rename field", "src/UserController.java", "src/UserControllerTest.java")
+        c3 = self._commit("3", "Ann", "Tidy <tags>", "src/UserController.java", "README.md", "src/UserControllerTest.java")
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp)
         cfg = gh.load_config(tmp, TARGET, "origin", os.path.join(tmp, "index.html"), None,
@@ -904,17 +1009,22 @@ class StatsPageTests(unittest.TestCase):
         self.assertEqual((stats["src/UserVO.java"].type, len(stats["src/UserVO.java"].commits)), ("VO", 1))
         self.assertEqual(stats["README.md"].type, "Other")
         page = gh.render_stats_html(cfg, "now", [r])
-        rows = re.findall(r'<tr id="[^"]*"><td class="path"><a href="index.html#([^"]*)"[^>]*>([^<]*)</a></td>'
-                          r'<td class="num">(\d+)</td><td class="num"[^>]*>(\d+)</td>', page)
+        rows = [("file/" + sid, name, c, u) for sid, name, c, u in re.findall(STATS_ROW, page)]
         self.assertEqual(rows, [("file/svc/src/UserController.java", "src/UserController.java", "3", "2"),
                                 ("file/svc/src/UserVO.java", "src/UserVO.java", "1", "1"),
+                                ("file/svc/src/UserControllerTest.java", "src/UserControllerTest.java", "2", "2"),
                                 ("file/svc/README.md", "README.md", "1", "1")])
         # summary: only files changed by more than one user, linked to their row
         summary = page[page.index('<section class="summary">'):page.index("</section>", page.index('<section class="summary">'))]
-        self.assertIn('<a href="#stats-file/svc/src/UserController.java">src/UserController.java</a></td>'
+        self.assertIn('table class="stats summary-table sortable"', summary)
+        self.assertEqual(summary.count('<button type="button" class="sort"'), 5)
+        self.assertIn('<td class="path"><span>src/UserController.java</span></td>'
                       '<td>Controller</td><td class="num">2</td><td class="num">3</td><td>Ann, Bob</td>', summary)
         self.assertNotIn("UserVO.java", summary)
         self.assertNotIn("README.md", summary)
+        self.assertNotIn("UserControllerTest.java", summary)  # Test files stay out of the summary
+        self.assertIn("Test files are left out of this summary", summary)
+        self.assertIn("(1 file)", summary)
         self.assertIn('id="stats-file/svc/src/UserController.java"', page)
         # groups appear in the requested order, Other last
         self.assertLess(page.index(">Controller <"), page.index(">VO <"))
@@ -941,7 +1051,8 @@ class StatsPageTests(unittest.TestCase):
         alpha = next(r for r in rep.repos if r.name == "alpha")
         for path, entries in alpha.files:
             fid = gh.esc(gh.anchor_id("file", "alpha", path))
-            m = re.search(r'href="index.html#' + re.escape(fid) + r'"[^>]*>[^<]*</a></td>'
+            sid = gh.esc(gh.anchor_id("stats-file", "alpha", path))
+            m = re.search(r'<tr id="' + re.escape(sid) + r'"><td class="path">.*?</td>'
                           r'<td class="num">(\d+)</td><td class="num"[^>]*>(\d+)</td>', page)
             self.assertIsNotNone(m, path)
             self.assertEqual(int(m.group(1)), len(entries), path)
@@ -950,10 +1061,21 @@ class StatsPageTests(unittest.TestCase):
         # every repository with changes has a summary entry; alpha has one author per file
         summary = page[page.index('<section class="summary">'):]
         summary = summary[:summary.index("</section>")]
-        self.assertIn("alpha</a> <span class=\"muted\">(0 files)</span>", summary)
-        self.assertIn("No file was modified by more than one user.", summary)
-        for name in ("beta", "gamma", "zeta"):                # no-change / error repos listed
+        self.assertNotIn("alpha</a>", summary)                # no multi-user file: left out
+        self.assertNotIn("No file was modified by more than one user.", summary)
+        self.assertIn("No repository has a file modified by more than one user.", summary)
+        for name in ("gamma", "zeta"):                        # error repos listed
             self.assertIn(f"<li><b>{name}</b>", page)
+        for name in ("beta", "epsilon"):                      # no-change repos left out
+            self.assertNotIn(f"<b>{name}</b>", page)
+            self.assertNotIn(f"stats/{name}", page)
+        # two tabs: the summary shown first, the per-type details hidden until chosen
+        s_at, d_at = page.index('<div class="tab-panel" id="tab-summary"'), page.index('<div class="tab-panel" id="tab-details"')
+        self.assertLess(page.index('<section class="summary">'), d_at)
+        self.assertGreater(page.index('<section class="summary">'), s_at)
+        self.assertGreater(page.index('<details class="repo" id="stats/alpha"'), d_at)
+        self.assertIn('aria-labelledby="tab-btn-details" hidden>', page)
+        self.assertNotIn('aria-labelledby="tab-btn-summary" hidden', page)
 
     def test_stats_config(self):
         tmp = tempfile.mkdtemp()
@@ -1071,6 +1193,79 @@ class LinkIntegrationTests(unittest.TestCase):
                                             f"&targetBranch=refs%2Fheads%2Fhotfix%2FSG_19.17.1#{p}"),
                            bitbucket=base,
                            expect_file=lambda tc, p: f"{base}/projects/proj/repos/alpha/browse/{p}?at={tc}")
+
+    def test_bitbucket_server_detected_without_base_url(self):
+        # BITBUCKET_BASE_URL not set: a self-hosted Bitbucket remote still gets links
+        for url, base in (("https://u@bitbucket.corp.example/scm/proj/alpha.git", "https://bitbucket.corp.example"),
+                          ("ssh://git@bitbucket.corp.example:7999/proj/alpha.git", "https://bitbucket.corp.example")):
+            with self.subTest(url=url):
+                self.check(url,
+                           lambda c, p: f"{base}/projects/proj/repos/alpha/commits/{c}" + (f"#{p}" if p else ""),
+                           lambda b, t, p: (f"{base}/projects/proj/repos/alpha/compare/diff?"
+                                            "sourceBranch=refs%2Fheads%2Frelease%2FSG_19.18.0"
+                                            f"&targetBranch=refs%2Fheads%2Fhotfix%2FSG_19.17.1#{p}"),
+                           expect_file=lambda tc, p: f"{base}/projects/proj/repos/alpha/browse/{p}?at={tc}")
+
+    def test_detect_bitbucket_server_base(self):
+        d = gh.detect_bitbucket_server_base
+        self.assertEqual(d("https://bb.corp.example/scm/proj/r.git"), "https://bb.corp.example")
+        self.assertEqual(d("https://u:t@bb.corp.example:8443/bitbucket/scm/PROJ/r.git"),
+                         "https://bb.corp.example:8443/bitbucket")
+        self.assertEqual(d("http://bb.corp.example:7990/scm/~jdoe/r.git"), "http://bb.corp.example:7990")
+        self.assertEqual(d("ssh://git@bb.corp.example:7999/proj/r.git"), "https://bb.corp.example")
+        for url in ("ssh://git@bb.corp.example/proj/r.git", "https://github.com/o/r.git",
+                    "git@bitbucket.org:ws/r.git", "https://bitbucket.org/ws/r.git", "C:\\repos\\r",
+                    "/srv/git/r.git", "", "https://host/scm/r.git"):
+            self.assertIsNone(d(url), url)
+        lb = gh.make_link_builder("https://bb.corp.example/scm/proj/r.git", None, None)
+        self.assertEqual((lb.platform, lb.base_url), ("bitbucket-server", "https://bb.corp.example/projects/proj/repos/r"))
+        # BITBUCKET_BASE_URL, when set, still wins
+        lb = gh.make_link_builder("https://bb.corp.example/scm/proj/r.git", None, "https://web.corp.example")
+        self.assertEqual(lb.base_url, "https://web.corp.example/projects/proj/repos/r")
+
+    def test_windows_path_remote_has_no_links(self):
+        self.assertEqual(gh.remote_url_to_https("C:\\repos\\r"), (None, None))
+        self.assertEqual(gh.remote_url_to_https("C:/repos/r"), (None, None))
+        lb = gh.make_link_builder("C:/repos/r", None, "https://bb.corp.example")
+        self.assertFalse(lb.available)
+
+    def test_stats_page_links_to_bitbucket(self):
+        base = "https://bitbucket.corp.example"
+        real = gh.run_git
+        def fake(repo, args):
+            if list(args[:2]) == ["remote", "get-url"]:
+                return "ssh://git@bitbucket.corp.example:7999/proj/alpha.git\n"
+            return real(repo, args)
+        out_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out_dir)
+        with mock.patch.object(gh, "run_git", side_effect=fake):
+            rep = gh.generate_report(self.fx.repos, TARGET, "origin", os.path.join(out_dir, "index.html"),
+                                     None, base, None, os.path.join(out_dir, "stats.html"), log=lambda s: None)
+        alpha = next(r for r in rep.repos if r.name == "alpha")
+        tc = alpha.target_commit
+        row = lambda p: rep.stats_html[rep.stats_html.index(f'<tr id="{gh.esc(gh.anchor_id("stats-file", "alpha", p))}">'):][:3000]
+        cfg = row("app/config.yml")
+        file_url = f"{base}/projects/proj/repos/alpha/browse/app/config.yml?at={tc}"
+        compare = (f"{base}/projects/proj/repos/alpha/compare/diff?sourceBranch=refs%2Fheads%2Frelease%2FSG_19.18.0"
+                   "&amp;targetBranch=refs%2Fheads%2Fhotfix%2FSG_19.17.1#app/config.yml")
+        self.assertTrue(cfg.startswith(f'<tr id="stats-file/alpha/app/config.yml"><td class="path"><a href="{file_url}" target="_blank"'), cfg[:300])
+        self.assertIn(f'<a class="compare" href="{compare}"', cfg)
+        self.assertIn(f'<a class="filelink" href="{file_url}"', cfg)
+        self.assertNotIn("index.html", cfg)
+        # deleted at the target: the name opens the compare diff, and there is no File link
+        dele = row("b.txt")
+        dele = dele[:dele.index("</td>")]
+        self.assertIn(f'<td class="path"><a href="{base}/projects/proj/repos/alpha/compare/diff?', dele)
+        self.assertNotIn("filelink", dele)
+        # no file link goes to the local review page; only the page-header link does
+        self.assertEqual(re.findall(r'href="index.html[^"]*"', rep.stats_html), ['href="index.html"'])
+        # summary tab file names and review-page file names open Bitbucket too
+        for page in (rep.stats_html, rep.html):
+            names = re.findall(r'<a(?: class="path")? href="([^"]*)" target="_blank"[^>]*title="Open the (?:file|compare diff)', page)
+            self.assertTrue(names)
+            self.assertTrue(all(u.startswith(base + "/projects/proj/repos/alpha/") for u in names), names[:3])
+        self.assertIn(f'<a class="path" href="{file_url}"', rep.html)
+        self.assertEqual(re.findall(r'href="[^"#:]*\.html[^"]*"', rep.html), ['href="stats.html"'])  # only the header link
 
     def test_bitbucket_server_compare_direction(self):
         # sourceBranch = the release being reviewed (target), targetBranch = the base

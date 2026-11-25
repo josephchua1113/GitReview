@@ -38,3 +38,40 @@
     - **Folder groups apply only when the name matches no type.** A file inside a `resources/`, `routes/` or `template(s)/` folder at any depth goes to Resources, Route or Template. The innermost such folder decides. The file's name still takes priority: `resources/UserMapper.xml` stays a Mapper and `resources/application.properties` is Properties. Files in a `routes/` folder join the existing Route group rather than a separate one.
     - **Group order:** your original list, then Properties, Util, Constant, Resources, Template, then Other.
     - **Summary at the top:** for each repository, a table of the files changed by more than one user, with the file's type, user count, commit count and user names. It's sorted by user count, most first. Each file links to its row further down the page. A repository with no such file says so.
+20. **Summary: tests left out, columns sortable.**
+    - Test-type files are left out of the top summary. They still appear in the Test group lower on the page. A line under the summary heading says so.
+    - Every summary column header (File, Type, Users, Commits, User names) can be clicked to sort. Click again to reverse the order. Number columns sort highest first on the first click, and text columns sort A to Z. Ties keep the default order. The default order is still most users first, and the Users header shows that.
+    - The sorting is plain JavaScript on the page, with no extra files or libraries.
+21. **Stats page tabs, and no-change repositories hidden.**
+    - **Two tabs.** The page opens on the **Summary** tab, which holds only the sortable table of files changed by more than one user. The **Details** tab holds the per-repository, per-type tables with commit messages, plus the expand/collapse buttons.
+    - **Links open the right tab.** A file or repository link in the summary switches to Details and scrolls to that row. Opening the page with such an address (for example `stats.html#stats/<repo>`) does the same.
+    - **Printing** prints both tabs.
+    - **Hidden repositories.** Repositories with no change no longer appear on the stats page. Repositories with an error (fetch failed, no base branch found) are still listed at the top under "Repositories with errors", because they hide missing data rather than an empty release. The review page (index.html) is unchanged and still lists every repository.
+22. **Summary tab lists only repositories that have multi-user files.** A repository where no file was changed by more than one user no longer appears on the Summary tab. If no repository has such a file, the tab shows one line saying so instead of being blank. Those repositories still appear on the Details tab.
+23. **Review page loading for large releases (one HTML file kept).**
+    - **Compressed diffs.** Each file's code diff is stored in the page gzip-compressed and base64-encoded, then unpacked by the browser's built-in DecompressionStream (Chrome/Edge 80+, Firefox 113+, Safari 16.4+). This works when the page is opened from disk with a double-click. Nothing is cut or summarised: a test unpacks every diff and compares it with git's output, and the browser check compares every drawn line with the stored data.
+    - **Drawn near the screen.** A diff is drawn when its row comes within about 1,500 px of the screen. Its height is reserved in advance, so the page doesn't jump. Rows far off screen also skip browser layout (CSS `content-visibility:auto`) until they come near. Each row carries an estimated height, so the scrollbar and jumps to a file stay accurate.
+    - **"Search code diffs" box.** It searches every diff, unpacking them as needed. It shows the match count. Enter / ↓ goes to the next match and Shift+Enter / ↑ to the previous one. Each jump opens and draws that file, highlights the line and scrolls to it. If the match is in a file hidden by the path/status filter, it says so. The existing path/message/user search is unchanged.
+    - **"Draw all diffs" button.** It draws everything, in batches, with a progress count. Use it before printing or before the browser's own Ctrl+F. Printing also starts it. A diff not yet drawn prints a note telling you to click Draw all and print again.
+    - **Measured on a synthetic release** (1 repository, 1,495 files, 300 commits, 585,628 diff lines, Chromium on this machine):
+      - **File size:** 19.3 MB, down from 67.8 MB in the old format.
+      - **Open time:** 0.6–0.7 s, down from 21–23 s.
+      - **Searching all diffs:** 1.4 s the first time, then about 0.1 s per jump.
+      - **Draw all:** 2.9 s.
+    - The browser-check scripts are in `browser-checks/`.
+24. **Repositories in sub folders.**
+    - **How the search works.** REPOS_FOLDER is now searched through sub folders. A folder with `.git` inside is a repository, and the script doesn't look further inside it. Any other folder is searched down to `REPO_SEARCH_DEPTH` levels below REPOS_FOLDER. This is a new setting in the configuration block. The default of 3 covers `REPOS_FOLDER/<group>/<repo>` with one level to spare. Set it to 1 for the old behaviour (direct sub folders only).
+    - **Names.** A repository's name is its path below REPOS_FOLDER, for example `payments/api-service`. Two repositories with the same folder name in different groups therefore stay separate, including in links and anchors.
+    - **Skipped folders.** The log lists only the highest folders where no repository was found, for example `teamB` and not every empty folder under it, and also empty folders next to repositories (`teamA/docs`).
+    - **Symlinks.** A symlink pointing at a repository still counts as a repository. Symlinked folders are not searched further, so a link loop or a second link can't list the same repository twice.
+25. **Bitbucket links on both pages.**
+    - **Self-hosted Bitbucket is now detected from the remote URL, even with `BITBUCKET_BASE_URL = None`.** Before, a remote on your own Bitbucket host got no Compare, File or commit links unless BITBUCKET_BASE_URL was set, because the host isn't a known public site. Two kinds of remote are now recognised:
+      - an `https://host[/context]/scm/<project>/<repo>.git` remote;
+      - an `ssh://git@host:7999/<project>/<repo>.git` remote.
+
+      The links are then built from that host. BITBUCKET_BASE_URL still wins when set, for example when the web address differs from the clone host.
+    - **Stats page Details tab: each file name opens the file on Bitbucket.** It opens the file at the target commit, or the Compare diff when the file was deleted. Each file also gets `Compare ↗` and `File ↗` links, plus a small `Review page` link to the local review page.
+    - **Stats page Summary tab:** the file name still jumps to its Details row, and the Compare and File links are added under it.
+    - **Local remotes:** a Windows path used as a remote (`C:\...`) is now treated as local and gets no links, instead of a wrong link.
+    - **Sample pages:** the click repository's remote is set to a made-up Bitbucket host (`bitbucket.corp.example`) to show the link layout. The fixture repositories have local remotes, so they show no links.
+26. **File links go to Bitbucket only.** Clicking a file name opens it on Bitbucket in a new tab, on the review page and on both stats tabs. It opens the file at the target commit, or its Compare diff when the file was deleted. The "Review page" link per file is removed, and the Summary tab no longer jumps to the Details row. The only remaining links between the two local pages are the page-header links ("Per-file statistics page →" and "← Review page"). The `#` link-to-this-row anchor on the review page stays: it only scrolls within the same page. When a repository has no links (for example, a local-path remote), file names are plain text.

@@ -615,7 +615,7 @@ def remote_url_to_https(url: str) -> Tuple[Optional[str], Optional[str]]:
     else:
         # scp-like syntax: [user@]host:path  (no slash before the colon)
         m = re.match(r"^(?:[^@/]+@)?([^:/]+):(.+)$", url)
-        if not m or os.path.exists(url):
+        if not m or os.path.exists(url) or re.match(r"^[A-Za-z]:[\\/]", url):   # C:\... is a local path
             return None, None
         host = m.group(1).lower()
         path = "/" + m.group(2).lstrip("/")
@@ -760,6 +760,32 @@ def make_bitbucket_link_builder(remote_url: Optional[str], bitbucket_base_url: s
     return LinkBuilder("bitbucket-server", f"{bitbucket_base_url}/projects/{owner}/repos/{slug}")
 
 
+def detect_bitbucket_server_base(remote_url: str) -> Optional[str]:
+    """Web address of a self-hosted Bitbucket (Server / Data Center) read from its
+    remote URL, or None when the URL doesn't look like one. Used when
+    BITBUCKET_BASE_URL is not set.
+
+    https://host[:port][/context]/scm/proj/repo.git -> https://host[:port][/context]
+    ssh://git@host:7999/proj/repo.git               -> https://host  (7999 = Bitbucket's ssh port)
+    """
+    url = (remote_url or "").strip()
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host, port = (parts.hostname or "").lower(), parts.port
+    except ValueError:
+        return None
+    if not host or host == "bitbucket.org":
+        return None
+    scheme = parts.scheme.lower()
+    segs = [x for x in parts.path.split("/") if x]
+    if scheme in ("http", "https") and "scm" in segs[:-2]:
+        context = "/".join(segs[:segs.index("scm")])
+        return f"{scheme}://{host}{f':{port}' if port else ''}" + (f"/{context}" if context else "")
+    if scheme in ("ssh", "git+ssh", "ssh+git") and port == 7999 and len(segs) >= 2:
+        return f"https://{host}"
+    return None
+
+
 def make_link_builder(remote_url: Optional[str], template: Optional[Dict[str, str]],
                       bitbucket_base_url: Optional[str] = None) -> LinkBuilder:
     if bitbucket_base_url:
@@ -769,6 +795,9 @@ def make_link_builder(remote_url: Optional[str], template: Optional[Dict[str, st
     base_url, host = remote_url_to_https(remote_url)
     if host in KNOWN_HOSTS and base_url:
         return LinkBuilder(KNOWN_HOSTS[host], base_url)
+    bb_server = detect_bitbucket_server_base(remote_url)
+    if bb_server and not template:
+        return make_bitbucket_link_builder(remote_url, bb_server)
     if template:
         needs_base = any("{base_url}" in t for t in template.values())
         if needs_base and not base_url:
@@ -1179,6 +1208,50 @@ def _render_repo_message(w, r: RepoReport, kind: str, remote: str):
     w("</div>\n</details>\n")
 
 
+def file_link_urls(r: RepoReport, path: str, remote: str) -> Tuple[Optional[str], Optional[str]]:
+    """(compare URL, file URL) on the hosting site (e.g. Bitbucket) for one changed file.
+
+    Compare: base -> target diff of the file. File: the file at the target branch's
+    commit, only when the file exists there (not for a deleted file). None when the
+    repository has no links (see LinkBuilder.unavailable_reason).
+    """
+    if not (r.links and r.base_branch and r.target_branch):
+        return None, None
+    base = r.base_branch[len(remote) + 1:]        # branch names without "<remote>/"
+    target = r.target_branch[len(remote) + 1:]
+    compare = r.links.compare_url(base, target, path)
+    file_url = None
+    if r.target_commit and path in r.target_paths:
+        file_url = r.links.file_url(r.target_commit, path)
+    return compare, file_url
+
+
+def file_name_html(r: RepoReport, path: str, remote: str, css: str = "") -> str:
+    """The file path, linked to the file on the git host (e.g. Bitbucket) at the target
+    commit, or to its Compare diff when the file no longer exists there. Plain text
+    when the repository has no links. Never a link to a local page."""
+    compare, file_url = file_link_urls(r, path, remote)
+    url = file_url or compare
+    cls = f' class="{css}"' if css else ""
+    if not url:
+        return f"<span{cls}>{esc(path)}</span>"
+    where = PLATFORM_LABELS.get(r.links.platform, "the git host")
+    what = "file" if file_url else "compare diff (the file was deleted)"
+    return f'<a{cls} href="{esc(url)}" {EXT} title="Open the {what} on {esc(where)}">{esc(path)}</a>'
+
+
+def file_links_html(r: RepoReport, path: str, remote: str) -> str:
+    compare, file_url = file_link_urls(r, path, remote)
+    out = []
+    if compare:
+        out.append(f'<a class="compare" href="{esc(compare)}" {EXT} '
+                   f'title="Base → target diff of this file on {esc(PLATFORM_LABELS.get(r.links.platform, "the git host"))}">Compare ↗</a>')
+    if file_url:
+        out.append(f'<a class="filelink" href="{esc(file_url)}" {EXT} '
+                   f'title="File at {esc(r.target_branch)} ({esc(r.target_commit)})">File ↗</a>')
+    return " ".join(out)
+
+
 def _render_repo_changes(w, r: RepoReport, remote: str):
     _repo_summary(w, r, f'<span class="pair">[{_branch_pair(r)}]</span>')
     w('<div class="repo-body">\n')
@@ -1191,8 +1264,6 @@ def _render_repo_changes(w, r: RepoReport, remote: str):
           f"(<code>{esc(r.links.base_url or '')}</code>)</p>\n")
     w('<p class="no-match" hidden>No entries in this repository match the current search or status filter.</p>\n')
 
-    base = r.base_branch[len(remote) + 1:]        # branch names without "<remote>/"
-    target = r.target_branch[len(remote) + 1:]
     # Three columns per file: column 1 = file path (with Compare/File links and
     # anchor), column 2 = the file's code diff (git diff base...target), column 3 =
     # the file's commits (status, message, date, commit, user). Columns 2 and 3 can
@@ -1202,14 +1273,8 @@ def _render_repo_changes(w, r: RepoReport, remote: str):
       '<div class="detail-label">Changes: status, commit message, date, commit id, user</div></div>\n')
     for path, entries in r.files:
         fid = anchor_id("file", r.name, path)
-        url = r.links.compare_url(base, target, path)
-        compare = f'<a class="compare" href="{esc(url)}" {EXT}>Compare ↗</a>' if url else ""
-        if r.target_commit and path in r.target_paths:
-            furl = r.links.file_url(r.target_commit, path)
-            if furl:
-                compare += (f' <a class="filelink" href="{esc(furl)}" {EXT} '
-                            f'title="File at {esc(r.target_branch)} ({esc(r.target_commit)})">File ↗</a>')
-        _render_file_row(w, r, fid, f'<span class="path">{esc(path)}</span>', path, compare,
+        compare = file_links_html(r, path, remote)
+        _render_file_row(w, r, fid, file_name_html(r, path, remote, "path"), path, compare,
                          [(c, ch) for c, ch in entries], "file")
     if r.no_file_commits:
         fid = anchor_id("nofiles", r.name)
@@ -1893,8 +1958,9 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
               '<th aria-sort="none"><button type="button" class="sort" data-kind="text">User names</button></th>'
               '</tr></thead><tbody>\n')
             for fs in multi:
-                sid = anchor_id("stats-file", r.name, fs.path)
-                w(f'<tr><td class="path"><a href="#{esc(sid)}">{esc(fs.path)}</a></td>'
+                links = file_links_html(r, fs.path, cfg.remote_name)
+                w(f'<tr><td class="path">{file_name_html(r, fs.path, cfg.remote_name)}'
+                  + (f'<div class="flinks">{links}</div>' if links else "") + '</td>'
                   f'<td>{esc(fs.type)}</td><td class="num">{len(fs.users)}</td>'
                   f'<td class="num">{len(fs.commits)}</td><td>{esc(", ".join(fs.users))}</td></tr>\n')
             w("</tbody></table>\n")
@@ -1924,10 +1990,10 @@ def render_stats_html(cfg: Config, generated: str, reports: Sequence[RepoReport]
             w('<table class="stats"><thead><tr><th>File</th><th class="num">Commits</th>'
               '<th class="num">Users</th><th>Commit messages</th></tr></thead><tbody>\n')
             for fs in group:
-                fid = anchor_id("file", r.name, fs.path)
                 sid = anchor_id("stats-file", r.name, fs.path)
-                w(f'<tr id="{esc(sid)}"><td class="path"><a href="{esc(review_href)}#{esc(fid)}" '
-                  f'title="Open this file on the review page">{esc(fs.path)}</a></td>'
+                links = file_links_html(r, fs.path, cfg.remote_name)
+                w(f'<tr id="{esc(sid)}"><td class="path">{file_name_html(r, fs.path, cfg.remote_name)}'
+                  + (f'<div class="flinks">{links}</div>' if links else "") + '</td>'
                   f'<td class="num">{len(fs.commits)}</td>'
                   f'<td class="num" title="{esc(", ".join(fs.users))}">{len(fs.users)}</td><td>')
                 w(f'<details class="msgs"><summary>{len(fs.commits)} commit'
@@ -1965,6 +2031,8 @@ main{padding:12px 20px 40px}
 .summary h2{font-size:16px;margin:4px 0 8px}.summary h3{font-size:14px;margin:12px 0 4px}
 .summary-table td.path{width:40%}
 .summary-table th{white-space:nowrap}
+.flinks{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:12px;margin-top:2px}
+.flinks a{margin-right:10px}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:0 0 14px}
 .tabs [role=tab]{font:inherit;font-weight:600;padding:8px 16px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:none;cursor:pointer;color:var(--muted);margin-bottom:-1px}
 .tabs [role=tab][aria-selected=true]{color:var(--fg);background:#fff;border-color:var(--line);border-bottom:1px solid #fff}
